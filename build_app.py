@@ -70,9 +70,14 @@ def main() -> int:
         step(f"旧产物改名 -> {old.name}")
         DIST.rename(old)
 
+    icon = ROOT / "assets" / "visionforge.ico"
     if not args.no_icon:
-        step("生成应用图标")
-        subprocess.run([sys.executable, str(ROOT / "tools" / "make_icon.py")], check=True)
+        # 图标已入库时直接复用：CI 不该为了画图标再装 Pillow
+        if icon.exists():
+            step(f"复用已有图标 {icon.name}")
+        else:
+            step("生成应用图标")
+            subprocess.run([sys.executable, str(ROOT / "tools" / "make_icon.py")], check=True)
 
     step("写入版本信息")
     VERSION_INFO.parent.mkdir(parents=True, exist_ok=True)
