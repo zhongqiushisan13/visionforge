@@ -1,5 +1,11 @@
 # Changelog
 
+## 未发布
+
+### 修复
+
+- 系统自检在 Windows 11 上误报 "Windows 10"：Win11 内部版本号仍是 10.0，Python 3.11 的 `platform.release()` 不识别；改为按 build 号（≥22000 即 Win11）判断，并补充显示 build 号。
+
 ## v1.1.1 - 2026-11-07
 
 ### 安全

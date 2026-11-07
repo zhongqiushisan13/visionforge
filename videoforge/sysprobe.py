@@ -14,6 +14,7 @@ import platform
 import shutil
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -128,11 +129,27 @@ def _http_probe(url: str, timeout: float = 2.5) -> Dict[str, Any]:
         return {"ok": False, "error": str(exc)[:160]}
 
 
+def _windows_info() -> Dict[str, Any]:
+    """Windows 11 的内部版本号仍是 10.0（build>=22000），
+    Python 3.11 的 platform.release() 会把它报成 "10"；
+    这里直接按 build 号判断，3.12+ 也可用同一逻辑。"""
+    info: Dict[str, Any] = {"system": platform.system(), "release": platform.release(),
+                            "machine": platform.machine(), "python": platform.python_version()}
+    if os.name == "nt":
+        try:
+            v = sys.getwindowsversion()
+            info["build"] = v.build
+            if v.major == 10 and v.build >= 22000:
+                info["release"] = "11"
+        except Exception:
+            pass
+    return info
+
+
 def probe(settings: Optional[Settings] = None) -> Dict[str, Any]:
     s = settings or Settings.load()
     p: Dict[str, Any] = {
-        "os": {"system": platform.system(), "release": platform.release(),
-               "machine": platform.machine(), "python": platform.python_version()},
+        "os": _windows_info(),
         "cpu": {"cores": os.cpu_count() or 1, "name": platform.processor() or ""},
         "ram_gb": _ram_gb(),
         "disk_free_gb": round(shutil.disk_usage(APP_ROOT).free / 1024 ** 3, 1),
