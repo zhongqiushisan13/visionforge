@@ -49,10 +49,35 @@ def _c(text: str, color: str) -> str:
     return f"{_COLOR.get(color, '')}{text}{_COLOR['reset']}"
 
 
+def _emit(line: str) -> None:
+    """往 stdout 写一行日志，绝不因为编码问题把主流程带崩。
+
+    英文版 Windows 的控制台是 cp1252，中文日志一 print 就是 UnicodeEncodeError；
+    而日志恰好夹在提交任务、切 provider 这些关键路径上，一崩就是“莫名其妙失败”。
+    打包成 windowed exe 后 sys.stdout 还可能是 None，同样要兜住。
+    """
+    stream = sys.stdout
+    if stream is None:
+        return
+    try:
+        stream.write(line + "\n")
+        stream.flush()
+    except UnicodeEncodeError:
+        enc = getattr(stream, "encoding", None) or "utf-8"
+        try:
+            stream.write(line.encode(enc, "replace").decode(enc) + "\n")
+            stream.flush()
+        except (OSError, ValueError):
+            pass
+    except (OSError, ValueError):
+        # 控制台已关闭 / 流被换成了不可写对象
+        pass
+
+
 def log(msg: str, *, tag: str = "vf", color: str = "") -> None:
     ts = time.strftime("%H:%M:%S")
     line = f"{_c(ts, 'dim')} {_c(f'[{tag}]', 'blue')} {msg}"
-    print(_c(line, color) if color else line, flush=True)
+    _emit(_c(line, color) if color else line)
 
 
 def ok(msg: str) -> None:
