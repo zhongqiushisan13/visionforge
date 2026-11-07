@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from dataclasses import dataclass, field, asdict, fields, is_dataclass
 from pathlib import Path
@@ -33,6 +34,47 @@ PROJECT_ROOT = APP_ROOT          # 兼容旧引用：所有可写路径都基于
 # --------------------------------------------------------------------------- #
 # .env 解析（不依赖 python-dotenv）
 # --------------------------------------------------------------------------- #
+def user_env_dir() -> Path:
+    """用户级配置目录：Windows 是 %APPDATA%\\VisionForge，其它平台 ~/.config/visionforge。
+
+    Key 放这里而不是 exe 旁边——便携包拷给别人时不会把 Key 一起带走。
+    """
+    if os.name == "nt":
+        base = os.environ.get("APPDATA")
+        if base:
+            return Path(base) / "VisionForge"
+    return Path.home() / ".config" / "visionforge"
+
+
+def env_file_path() -> Path:
+    """读 .env 的位置：优先用户目录；老安装（exe 旁边的 .env）继续兼容。"""
+    modern = user_env_dir() / ".env"
+    legacy = APP_ROOT / ".env"
+    if modern.exists() or not legacy.exists():
+        return modern
+    return legacy
+
+
+def tighten_file_permissions(path: Path | str) -> None:
+    """把含密钥/令牌的文件收紧到当前用户可读（POSIX 600；Windows 用 icacls）。"""
+    p = Path(path)
+    try:
+        if os.name == "nt":
+            user = os.environ.get("USERNAME", "")
+            domain = os.environ.get("USERDOMAIN", "")
+            principal = f"{domain}\\{user}" if domain and user else user
+            if principal:
+                subprocess.run(
+                    ["icacls", str(p), "/inheritance:r", "/grant:r", f"{principal}:F"],
+                    capture_output=True, timeout=15,
+                )
+        else:
+            os.chmod(p, 0o600)
+    except (OSError, subprocess.SubprocessError):
+        # 权限收紧失败不拦启动；doctor 会提示最近警告
+        pass
+
+
 def load_dotenv(path: Path | str, override: bool = False) -> None:
     p = Path(path)
     if not p.exists():
@@ -226,6 +268,14 @@ class PipelineConfig:
     mock: bool = False                        # 全离线占位素材，用于打通链路
     projects_dir: str = "projects"
     keep_intermediate: bool = True
+    # ---- 预算护栏（单位：元，估算值，不是账单）----
+    budget: float = 0.0                       # 单项目付费调用上限；0 = 不限制
+    # 单次调用估算价（元）。拍脑袋的保守值，可用 VF_PRICES 覆盖，如
+    # {"deepseek": 0.05, "minimax_video": 3.0, "minimax_tts": 0.1}
+    prices: Dict[str, float] = field(default_factory=lambda: {
+        "deepseek": 0.05, "minimax_video": 3.0, "minimax_tts": 0.1,
+        "comfyui": 0.0, "local": 0.0, "mock": 0.0,
+    })
 
 
 @dataclass
@@ -242,7 +292,8 @@ class Settings:
     def load(cls, root: Path | str = PROJECT_ROOT, config_file: str = "config.json",
              overrides: Optional[Dict[str, Any]] = None) -> "Settings":
         root = Path(root)
-        load_dotenv(root / ".env")
+        load_dotenv(env_file_path())          # 用户目录优先，兼容 exe 旁的老 .env
+        load_dotenv(root / ".env")            # 老位置仍在则继续生效（不覆盖已有值）
         s = cls._from_env()
         s.root = root
         cfg_path = root / config_file
@@ -318,7 +369,14 @@ class Settings:
             max_retries=_env_int("VF_RETRIES", 3),
             mock=_env_bool("VF_MOCK", False),
             projects_dir=_env("VF_PROJECTS_DIR", "projects"),
+            budget=_env_float("VF_BUDGET", 0.0),
         )
+        try:
+            custom = json.loads(_env("VF_PRICES", "{}"))
+            if isinstance(custom, dict):
+                pl.prices.update({k: float(v) for k, v in custom.items()})
+        except (ValueError, TypeError):
+            pass
         return cls(deepseek=ds, minimax=mm, comfy=cf, render=rd, pipeline=pl)
 
     def _merge(self, data: Dict[str, Any]) -> None:

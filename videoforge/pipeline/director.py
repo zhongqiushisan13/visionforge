@@ -30,6 +30,61 @@ class Director:
         self.writer = Screenwriter(settings)
         self.editor = Editor(settings)
         self._lock = threading.Lock()
+        # 预算检查与扣费是两件事：并发镜头在真正花钱前要先把额度“占住”，
+        # 否则 3 个 worker 会同时看到同一个余额，一起超额。
+        self._budget_lock = threading.Lock()
+        self._reservations: Dict[int, float] = {}
+        self._res_seq = 0
+
+    # ------------------------------------------------------------------ #
+    # 预算护栏：单镜重拍 + 重试会实打实重复计费，得有人看着账本
+    # ------------------------------------------------------------------ #
+    def _costs(self, project: Project) -> Dict[str, Any]:
+        return project.meta.setdefault("costs", {"total": 0.0, "entries": []})
+
+    def _budget_check(self, project: Optional[Project], est_key: str, label: str) -> int:
+        """检查并预占额度；返回预占 id，用完必须 `_release`。
+
+        `project=None` 用于立项阶段（工程还没创建），此时没有并发，直接比价。
+        """
+        budget = float(self.s.pipeline.budget or 0.0)
+        est = float(self.s.pipeline.prices.get(est_key, 0.0))
+        if budget <= 0 or est <= 0:
+            return 0
+        if project is None:
+            if est > budget:
+                raise RuntimeError(
+                    f"预算护栏：{label} 预估 ¥{est:.2f}，超过上限 ¥{budget:.2f}，已阻断。")
+            return 0
+        with self._budget_lock:
+            used = float(self._costs(project).get("total", 0.0))
+            reserved = sum(self._reservations.values())
+            if used + reserved + est > budget:
+                raise RuntimeError(
+                    f"预算护栏：{label} 已计费约 ¥{used:.2f}、在途 ¥{reserved:.2f}，"
+                    f"本次预估 ¥{est:.2f}，将超出上限 ¥{budget:.2f}，已阻断。"
+                    f"（上调 VF_BUDGET 或删掉部分镜头后重试；明细见「成本小结」）")
+            self._res_seq += 1
+            rid = self._res_seq
+            self._reservations[rid] = est
+            return rid
+
+    def _release(self, reservation: int) -> None:
+        if not reservation:
+            return
+        with self._budget_lock:
+            self._reservations.pop(reservation, None)
+
+    def _charge(self, project: Project, provider: str, shot_id: str = "") -> None:
+        est = float(self.s.pipeline.prices.get(provider, 0.0))
+        if est <= 0:
+            return
+        with self._budget_lock:
+            costs = self._costs(project)
+            costs["entries"].append({"ts": now_iso(), "provider": provider,
+                                     "shot": shot_id, "est": est})
+            costs["total"] = round(float(costs.get("total", 0.0)) + est, 4)
+            project.save()
 
     # ------------------------------------------------------------------ #
     # 立项
@@ -40,6 +95,9 @@ class Director:
         from ..utils import safe_filename, slugify
 
         t0 = time.time()
+        use_llm = self.s.deepseek.enabled and not self.s.pipeline.mock
+        if use_llm:
+            self._budget_check(None, "deepseek", "剧本生成")
         script, shots = self.writer.write(brief, title=title, duration=duration,
                                           aspect=aspect, style=style,
                                           language=language, shot_hint=shot_hint)
@@ -67,6 +125,8 @@ class Director:
                 "minimax" if self.s.minimax.enabled else "auto"),
         }
         project.save()
+        if use_llm:
+            self._charge(project, "deepseek", "plan")
         self._write_storyboard_md(project)
         log(f"项目已创建：{pdir}  《{project.title}》 {len(shots)} 镜 / {project.total_duration}s")
         return project
@@ -114,6 +174,9 @@ class Director:
         log(f"开始配音：{len(targets)} 条")
         for shot in targets:
             out = project.path("audio") / f"{shot.id}.mp3"
+            reservation = 0
+            if self.s.minimax.enabled and not self.s.pipeline.mock:
+                reservation = self._budget_check(project, "minimax_tts", f"{shot.id} 配音")
             try:
                 dur, engine = self.providers.voice.synthesize(
                     shot.text, out, voice_id=shot.speaker if shot.speaker not in ("", "旁白") else "",
@@ -128,12 +191,16 @@ class Director:
                     if shot.status == "pending":
                         shot.status = "voiced"
                     shot.updated_at = now_iso()
+                if engine == "minimax":
+                    self._charge(project, "minimax_tts", shot.id)
                 project.save()
             except Exception as exc:
                 stats["fail"] += 1
                 warn(f"{shot.id} 配音失败：{exc}")
                 with self._lock:
                     shot.error = f"tts: {exc}"[:400]
+            finally:
+                self._release(reservation)
         log(f"配音完成 ok={stats['ok']} silent={stats['silent']} fail={stats['fail']} "
             f"({human_time(time.time() - t0)})")
         return stats
@@ -178,23 +245,31 @@ class Director:
         def work(shot: Shot) -> None:
             out = project.path("clips") / f"{shot.id}.mp4"
             kf = Path(shot.keyframe) if shot.keyframe else None
-            result = self.providers.clip(shot, out, keyframe=kf)
-            with self._lock:
-                if result.ok:
-                    shot.clip = result.path
-                    shot.provider = result.provider
-                    shot.task_id = result.task_id
-                    shot.clip_duration = result.duration
-                    shot.seed = result.seed or shot.seed
-                    shot.status = "rendered"
-                    shot.error = ""
-                    shot.attempts = 0
-                else:
-                    shot.status = "failed"
-                    shot.error = "clip: 未产出文件"
-                    shot.attempts += 1
-                shot.updated_at = now_iso()
-                project.save()
+            reservation = 0
+            if self.s.minimax.enabled and not self.s.pipeline.mock:
+                reservation = self._budget_check(project, "minimax_video", f"{shot.id} 镜头")
+            try:
+                result = self.providers.clip(shot, out, keyframe=kf)
+                with self._lock:
+                    if result.ok:
+                        shot.clip = result.path
+                        shot.provider = result.provider
+                        shot.task_id = result.task_id
+                        shot.clip_duration = result.duration
+                        shot.seed = result.seed or shot.seed
+                        shot.status = "rendered"
+                        shot.error = ""
+                        shot.attempts = 0
+                    else:
+                        shot.status = "failed"
+                        shot.error = "clip: 未产出文件"
+                        shot.attempts += 1
+                    shot.updated_at = now_iso()
+                    project.save()
+                if result.ok and "minimax" in (result.provider or ""):
+                    self._charge(project, "minimax_video", shot.id)
+            finally:
+                self._release(reservation)
 
         return self._run_batch(project, targets, work, "生成镜头")
 
@@ -299,16 +374,21 @@ class Director:
             from ..llm import DeepSeek
             llm = DeepSeek(self.s.deepseek)
             if llm.available and not self.s.pipeline.mock:
-                msg = llm.json([
-                    {"role": "system", "content": "你是分镜提示词医生。只改提示词，不改故事。"},
-                    {"role": "user", "content":
-                        f"原视频提示词：\n{shot.video_prompt}\n\n原关键帧提示词：\n{shot.image_prompt}\n\n"
-                        f"导演修改意见：{note}\n\n"
-                        "请输出 JSON：{\"video_prompt\": \"英文，单镜头单动作，70词内\", "
-                        "\"image_prompt\": \"英文静帧提示词\", \"reason\": \"一句中文说明\"}"},
-                ], temperature=0.9, max_tokens=900)
-                shot.video_prompt = str(msg.get("video_prompt") or shot.video_prompt)
-                shot.image_prompt = str(msg.get("image_prompt") or shot.image_prompt)
+                reservation = self._budget_check(project, "deepseek", f"{shot_id} 重拍改写")
+                try:
+                    msg = llm.json([
+                        {"role": "system", "content": "你是分镜提示词医生。只改提示词，不改故事。"},
+                        {"role": "user", "content":
+                            f"原视频提示词：\n{shot.video_prompt}\n\n原关键帧提示词：\n{shot.image_prompt}\n\n"
+                            f"导演修改意见：{note}\n\n"
+                            "请输出 JSON：{\"video_prompt\": \"英文，单镜头单动作，70词内\", "
+                            "\"image_prompt\": \"英文静帧提示词\", \"reason\": \"一句中文说明\"}"},
+                    ], temperature=0.9, max_tokens=900)
+                    shot.video_prompt = str(msg.get("video_prompt") or shot.video_prompt)
+                    shot.image_prompt = str(msg.get("image_prompt") or shot.image_prompt)
+                    self._charge(project, "deepseek", f"{shot_id}:revise")
+                finally:
+                    self._release(reservation)
                 log(f"{shot.id} 提示词已按意见改写：{msg.get('reason', '')}")
             else:
                 shot.video_prompt = f"{shot.video_prompt} {note}".strip()

@@ -26,6 +26,7 @@ config.json
 # ---- 运行时数据 ----
 projects/
 logs/
+run/
 .qa/
 .tmp*/
 *.log

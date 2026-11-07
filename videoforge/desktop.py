@@ -23,6 +23,8 @@ from .config import APP_ROOT
 
 WINDOW_TITLE = "VisionForge · AI 视频编导台"
 LOG_DIR = APP_ROOT / "logs"
+_INSTANCE_HANDLE = None
+_INSTANCE_LOCK_FH = None
 
 
 # --------------------------------------------------------------------------- #
@@ -82,7 +84,8 @@ def wait_ready(url: str, timeout: float = 40.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            r = requests.get(url + "/api/bootstrap", timeout=1.5,
+            # /api/health 是唯一公开接口；bootstrap 需要 token，不能拿它探活
+            r = requests.get(url + "/api/health", timeout=1.5,
                              proxies={"http": None, "https": None})
             if r.status_code == 200:
                 return True
@@ -90,6 +93,63 @@ def wait_ready(url: str, timeout: float = 40.0) -> bool:
             pass
         time.sleep(0.25)
     return False
+
+
+# --------------------------------------------------------------------------- #
+# 单实例：projects/ 是共享的，双开会同时写同一份 project.json
+# --------------------------------------------------------------------------- #
+def _focus_existing_window() -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.FindWindowW(None, WINDOW_TITLE)
+        if not hwnd:
+            return False
+        user32.ShowWindow(hwnd, 9)       # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+        return True
+    except Exception:
+        return False
+
+
+def _acquire_single_instance() -> bool:
+    """拿到实例锁返回 True；已有实例时把旧窗口拉到前面并返回 False。"""
+    global _INSTANCE_HANDLE, _INSTANCE_LOCK_FH
+    if os.name == "nt":
+        kernel32 = ctypes.windll.kernel32
+        _INSTANCE_HANDLE = kernel32.CreateMutexW(None, True, "Local\\VisionForge.SingleInstance")
+        if kernel32.GetLastError() == 183:     # ERROR_ALREADY_EXISTS
+            _focus_existing_window()
+            return False
+        return True
+
+    lock_path = APP_ROOT / "run" / "app.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    _INSTANCE_LOCK_FH = open(lock_path, "a+b")
+    try:
+        import fcntl
+
+        fcntl.flock(_INSTANCE_LOCK_FH.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _release_single_instance() -> None:
+    global _INSTANCE_HANDLE, _INSTANCE_LOCK_FH
+    if os.name == "nt" and _INSTANCE_HANDLE:
+        ctypes.windll.kernel32.CloseHandle(_INSTANCE_HANDLE)
+        _INSTANCE_HANDLE = None
+    if _INSTANCE_LOCK_FH:
+        try:
+            import fcntl
+
+            fcntl.flock(_INSTANCE_LOCK_FH.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        _INSTANCE_LOCK_FH.close()
+        _INSTANCE_LOCK_FH = None
 
 
 def serve(port: int) -> None:
@@ -132,11 +192,19 @@ def main(argv: Optional[list[str]] = None, port: Optional[int] = None,
     args = parser.parse_args(argv)
 
     log_path = setup_logging()
+    if not _acquire_single_instance():
+        print("[VisionForge] 已有实例在运行，已切换到现有窗口")
+        return 0
     chosen = port or args.port or find_port()
     url = f"http://127.0.0.1:{chosen}"
 
     try:
         print(f"[VisionForge] app_root={APP_ROOT} port={chosen} frozen={getattr(sys, 'frozen', False)}")
+        try:
+            from .config import env_file_path
+            print(f"[VisionForge] API Key 配置文件：{env_file_path()}（只存在本机当前用户目录）")
+        except Exception:
+            pass
         # 首次运行：探测硬件、选编码器、定分辨率，别让用户先学会配环境
         try:
             from .sysprobe import auto_configure

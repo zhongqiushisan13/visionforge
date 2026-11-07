@@ -25,6 +25,9 @@ from ..schemas import Shot
 from ..utils import ensure_dir, log, probe_duration, warn
 
 FRAME_KEYS = ("length", "num_frames", "video_frames", "frames", "frame_count")
+TEXT_KEYS = ("text", "prompt")
+# 需要同步成片帧率的节点：保存节点 + CreateVideo（后者只负责打 fps 元数据）
+FPS_CLASSES = ("SaveVideo", "VHS_VideoCombine", "SaveAnimatedWEBP", "CreateVideo")
 VIDEO_EXT = (".mp4", ".webm", ".mov", ".mkv", ".gif")
 
 
@@ -85,7 +88,13 @@ class ComfyVideoProvider(ComfyUIProvider):
         for nid, text in ((pos, shot.video_prompt or shot.image_prompt),
                           (neg, shot.negative_prompt)):
             if nid and nid in wf:
-                wf[nid].setdefault("inputs", {})["text"] = text
+                ins = wf[nid].setdefault("inputs", {})
+                # 不同模型对提示词输入叫法不同：SD/SVD 系用 text，
+                # MiniMax H3 的 MiniMaxH3ImageToVideo 用 prompt
+                for key in TEXT_KEYS:
+                    if key in ins:
+                        ins[key] = text
+                        break
 
         for node in wf.values():
             if not isinstance(node, dict):
@@ -98,6 +107,9 @@ class ComfyVideoProvider(ComfyUIProvider):
                     inputs["steps"] = max(8, int(self.cfg.steps))
                 if "cfg" in inputs:
                     inputs["cfg"] = self.cfg.cfg
+            # 自定义采样链（SamplerCustomAdvanced）用 RandomNoise 提供种子
+            if cls == "RandomNoise" and "noise_seed" in inputs:
+                inputs["noise_seed"] = seed
             if "width" in inputs and "height" in inputs:
                 inputs["width"] = self.cfg.width
                 inputs["height"] = self.cfg.height
@@ -106,7 +118,9 @@ class ComfyVideoProvider(ComfyUIProvider):
                     inputs[key] = frames
             if cls == "LoadImage" and keyframe and Path(keyframe).exists():
                 inputs["image"] = self.upload_image(Path(keyframe))
-            if cls in SAVE_CLASSES or cls in ("SaveVideo", "VHS_VideoCombine", "SaveAnimatedWEBP"):
+            if (cls in SAVE_CLASSES or cls in FPS_CLASSES) and cls not in ("LoadImage",):
+                # CreateVideo 不是保存节点，但它的 fps 决定帧率元数据；
+                # 漏掉会让 24fps 拍出来的片段按 8fps 播，慢得离谱
                 if "frame_rate" in inputs:
                     inputs["frame_rate"] = fps
                 if "fps" in inputs:

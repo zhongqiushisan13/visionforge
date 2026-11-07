@@ -11,7 +11,7 @@
 
 不是"调用一次 API 弹出一段视频"的玩具。它是一条带状态、可断点续跑、可单镜重拍、可人工二次剪辑的生产线。
 
-> 要拿去讲、拿去投、拿去贴给同事看？口语版介绍词在 [docs/介绍词.md](docs/介绍词.md)；学术体的系统描述（摘要 / 方法 / 实验 / 局限 / 参考文献）在 [docs/技术报告.md](docs/技术报告.md)；动手前先看 [使用手册](docs/manual/README.md)。
+> 要拿去讲、拿去投、拿去贴给同事看？口语版介绍词在 [docs/介绍词.md](docs/介绍词.md)；学术体的系统描述（摘要 / 方法 / 实验 / 局限 / 参考文献）在 [docs/技术报告.md](docs/技术报告.md)；动手前先看 [使用手册](docs/manual/README.md)，版本变化看 [CHANGELOG](CHANGELOG.md)。
 
 ---
 
@@ -40,6 +40,8 @@
 
 ![设置与自检](docs/screenshots/settings.png)
 
+![安全与预算护栏](docs/screenshots/security-budget.png)
+
 ---
 
 ## 三、快速开始
@@ -48,14 +50,13 @@
 
 ```
 dist/VisionForge/VisionForge.exe        # 双击即用
-dist/VisionForge-1.1.0-win64.zip        # 便携包，解压后同样是双击 exe
+dist/VisionForge-1.1.1-win64.zip        # 便携包，解压后同样是双击 exe
 ```
 
-首次运行会在 exe 同级生成 `projects/`、`logs/`。要接真实模型：
+首次运行会在 exe 同级生成 `projects/`、`logs/`，并把 API Key 配置文件放到用户目录（Windows：`%APPDATA%\VisionForge\.env`；不会跟着便携包被拷走）。要接真实模型：
 
-1. 把 exe 同级的 `.env.example` 复制成 `.env`
-2. 填入 `DEEPSEEK_API_KEY`、`MINIMAX_API_KEY`
-3. 重新打开应用
+1. 打开设置页，填入 `DEEPSEEK_API_KEY`、`MINIMAX_API_KEY`；或参考 `.env.example` 手动编辑用户目录下的 `.env`
+2. 重新打开应用
 
 > exe 未做代码签名，Windows SmartScreen 可能拦一下：点「更多信息 → 仍要运行」即可。
 > 目标机器需要 WebView2 运行时（Win10/11 一般自带；缺失时应用会改用浏览器打开）。
@@ -77,7 +78,7 @@ python run_app.py            # 也可以双击 启动VisionForge.bat
 
 启动器会自动找一个空闲端口起本地服务，然后用 WebView2 开原生窗口；没有 WebView2 时自动退回浏览器。
 
-> ffmpeg 不用单独装：优先用 PATH 里的，找不到就用 `imageio-ffmpeg` 自带的静态版（需支持 libass / libx264）。打包版已经把 ffmpeg 塞进 `_internal`。
+> ffmpeg 不用单独装：打包版优先用 `_internal` 里版本锁定的静态版；源码运行优先尊重 PATH，找不到再用 `imageio-ffmpeg`。启动时会用一条最小 `drawtext` 命令验活，不能烧字幕的构建会被跳过。
 
 ### 命令行参数
 
@@ -98,6 +99,21 @@ python tools/qa_shot.py --url ...    # CDP 截图做界面回归
 ```
 
 想把成本压到 0 先把链路跑通：设置页勾上 **MOCK 模式**，或用环境变量 `VF_MOCK=1`。此时剧本用内置示例分镜、镜头用 ffmpeg 生成的占位片、配音走免费 edge-tts，仍会产出完整 MP4（含字幕、混音）。
+
+---
+
+## 本机安全与预算护栏（v1.1.1）
+
+- **本地 API 鉴权**：启动时生成随机 token 写入 `run/token`，所有 `/api/*` 请求必须带 `X-VF-Token`；页面由服务端自动注入
+- **Host 校验**：只接受 `127.0.0.1` / `localhost` / `[::1]`，拦截 DNS rebinding；不再开放跨域 CORS
+- **媒体保护**：项目视频/图片需要同源 Cookie 或 token 参数，外部网页不能直接窥探 `/media/*`
+- **密钥位置**：默认写到 `%APPDATA%\VisionForge\.env`（macOS/Linux：`~/.config/visionforge/.env`），便携包拷走不会带走 Key；旧位置 `.env` 仍兼容读取
+- **预算护栏**：`VF_BUDGET=20` 可设置单项目估算成本上限；DeepSeek / MiniMax 调用逐次记账到 `project.json`，超限在调用前阻断，成片页可导出成本小结
+- **单实例**：第二个实例不会同时写同一份工程，只会把已有窗口拉到前台
+- **孤儿进程清理**：启动时清理上次崩溃遗留的 ffmpeg/ffprobe 子进程
+- **Release 校验**：发布页附 `SHA256SUMS.txt`，下载后先核对哈希再运行
+
+自动化测试确需关闭防护时，才临时设置 `VF_ALLOW_UNSAFE_API=1`。
 
 ---
 
@@ -414,7 +430,7 @@ python build_app.py --clean
 
 ```
 dist/VisionForge/VisionForge.exe       # onedir，启动快（约 144MB）
-dist/VisionForge-1.1.0-win64.zip       # 便携包（约 57MB）
+dist/VisionForge-1.1.1-win64.zip       # 便携包（约 57MB）
 ```
 
 打包细节（`VisionForge.spec`）：

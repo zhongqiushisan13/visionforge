@@ -205,9 +205,13 @@ def recommend(p: Dict[str, Any], s: Settings) -> Dict[str, Any]:
     elif vram >= 10:
         comfy.update({"width": 1344, "height": 768})
     elif vram >= 6:
-        comfy.update({"width": 1152, "height": 648})
+        comfy.update({"width": 1152, "height": 640})
     else:
         comfy.update({"width": 1024, "height": 576})
+    # 视频模型（MiniMax H3 / WAN 等）按 32 对齐，SD 系按 8 即可；
+    # 统一取 32 的倍数，免得自动配置给出 648 这种工作流会直接报错的尺寸
+    for key in ("width", "height"):
+        comfy[key] = max(256, int(round(comfy[key] / 32)) * 32)
 
     local_video = (s.minimax.mode == "local") or bool(s.minimax.video_workflow)
     workers = 1 if local_video else max(2, min(4, cores // 2 or 2))

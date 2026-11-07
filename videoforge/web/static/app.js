@@ -44,12 +44,16 @@ function statusPill(status, clip) {
   return `<span class="pill ${status}">${map[status] || status}</span>`;
 }
 
+function authHeaders(extra = {}) {
+  return window.VF_TOKEN ? { ...extra, 'X-VF-Token': window.VF_TOKEN } : extra;
+}
+
 async function api(path, opts = {}) {
-  const init = { method: opts.method || 'GET' };
+  const init = { method: opts.method || 'GET', headers: authHeaders(opts.headers || {}) };
   if (opts.raw) {
     init.body = opts.body;
   } else if (opts.body !== undefined) {
-    init.headers = { 'Content-Type': 'application/json' };
+    init.headers = authHeaders({ 'Content-Type': 'application/json' });
     init.body = JSON.stringify(opts.body);
   }
   const res = await fetch(path, init);
@@ -667,6 +671,8 @@ function renderExport() {
   const p = S.project;
   const out = p.output_url;
   const dur = p.meta.final_duration || 0;
+  const costs = p.costs || { total: 0, entries: [] };
+  const budget = S.settings?.pipeline?.budget || 0;
   return `
   <div class="export-grid">
     <div class="panel">
@@ -703,6 +709,16 @@ function renderExport() {
           <div class="hint" style="margin-top:6px">${p.bgm ? esc(p.bgm.split(/[\\/]/).pop()) : '支持 mp3 / wav / m4a'}</div>
         </div>
       </div>
+      <div class="panel" style="margin-bottom:14px">
+        <div class="panel-head">${icon('list')}<h3>成本小结</h3>
+          <span class="sub">估算，非账单</span>
+          <div class="spacer"></div>
+          <button class="btn sm ghost" data-act="export-costs">${icon('download')}导出</button>
+        </div>
+        <div class="insp-row"><label>已发生</label><span>¥${Number(costs.total || 0).toFixed(2)}${budget ? ` / 上限 ¥${Number(budget).toFixed(2)}` : ''}</span></div>
+        <div class="insp-row"><label>调用次数</label><span>${(costs.entries || []).length}</span></div>
+        <div class="hint">${(costs.entries || []).slice(-4).map(e => `${esc(e.ts || '')} · ${esc(e.provider || '')} · ¥${Number(e.est || 0).toFixed(2)}`).join('<br>') || '还没有付费调用；本地/mock 通道记 0 元'}</div>
+      </div>
       <div class="panel">
         <div class="panel-head">${icon('terminal')}<h3>生成参数</h3></div>
         <div class="hint">
@@ -722,7 +738,7 @@ function bindExport() {
     if (!f.files[0]) return;
     try {
       await fetch(`/api/projects/${S.project.slug}/bgm?filename=${encodeURIComponent(f.files[0].name)}`,
-        { method: 'POST', body: f.files[0] });
+        { method: 'POST', body: f.files[0], headers: authHeaders() });
       toast('BGM 已上传');
       await openProject(S.project.slug);
     } catch (e) { toast(e.message, 'err'); }
@@ -756,7 +772,7 @@ function renderSettings() {
   return `
   <div class="set-grid">
     <div class="panel">
-      <div class="panel-head">${icon('key')}<h3>模型与接口</h3><span class="sub">密钥只写本地 .env，不上传</span></div>
+      <div class="panel-head">${icon('key')}<h3>模型与接口</h3><span class="sub">密钥只写本机用户目录，不上传</span></div>
 
       <div class="prov">
         <div class="ico">${icon('wand')}</div>
@@ -873,15 +889,22 @@ function renderSettings() {
         <label class="chk"><input type="checkbox" id="rdSub" ${st.render.subtitle ? 'checked' : ''}> 烧录字幕</label>
         <div class="divider"></div>
         <label class="chk"><input type="checkbox" id="rdMock" ${st.pipeline.mock ? 'checked' : ''}> MOCK 模式（全部走占位素材）</label>
+        <div class="field" style="margin-top:8px"><label>单项目预算上限（元，0=不限）</label>
+          <input class="input" id="plBudget" type="number" min="0" step="0.01" value="${Number(st.pipeline.budget || 0)}">
+          <div class="hint" style="margin-top:5px">超出后云端剧本 / 镜头 / 配音会被阻断，本地与 MOCK 通道记 0 元。</div>
+        </div>
       </div>
 
       <div class="panel" style="margin-bottom:14px">
         <div class="panel-head">${icon('cloud')}<h3>运行环境</h3></div>
         <div class="hint">
           工作目录：<span class="mono">${esc(S.boot?.workspace || '')}</span><br>
+          API Key 保存到：<span class="mono">${esc(st.security?.env_file || '')}</span><br>
+          本地 API 防护：<span class="mono">${st.security?.api_guard ? 'token + Host 校验已开启' : '调试模式已关闭防护'}</span><br>
           ffmpeg：<span class="mono">${esc(ff.path || '检测中…')}</span><br>
           版本：v${esc(S.boot?.version || '')}
         </div>
+        ${(d.recent_warnings || []).length ? `<details style="margin-top:8px"><summary class="hint" style="cursor:pointer">最近 ${d.recent_warnings.length} 条警告</summary><div class="log-box" style="margin-top:8px;max-height:150px">${d.recent_warnings.map(esc).join('\n')}</div></details>` : ''}
       </div>
 
       <div class="row">
@@ -1108,6 +1131,20 @@ document.addEventListener('click', async e => {
   }
 
   /* ---- 生产 ---- */
+  if (act === 'export-costs') {
+    if (!S.project) return toast('先打开一个项目', 'warn');
+    try {
+      const r = await api(`/api/projects/${S.project.slug}/costs`);
+      const blob = new Blob([r.summary || ''], { type: 'text/plain;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${S.project.slug}-成本小结.txt`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      toast('成本小结已导出');
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
   if (act === 'run-all') { await doAction('all'); return; }
   if (act === 'do') { await doAction(el.dataset.action, false); return; }
   if (act === 'step') {
@@ -1238,7 +1275,7 @@ document.addEventListener('click', async e => {
         ? `/api/projects/${S.project.slug}/shots/import?filename=${encodeURIComponent(f.name)}`
         : `/api/projects/${S.project.slug}/shots/${el.dataset.shot}/replace?filename=${encodeURIComponent(f.name)}`;
       toast('正在上传素材…', 'warn', 2000);
-      const res = await fetch(url, { method: 'POST', body: f });
+      const res = await fetch(url, { method: 'POST', body: f, headers: authHeaders() });
       if (!res.ok) return toast('上传失败', 'err');
       await openProject(S.project.slug, false); render(); toast('素材已导入');
     };
@@ -1324,7 +1361,7 @@ document.addEventListener('click', async e => {
                 fps: Number($('#rdFps').value), subtitle: $('#rdSub').checked,
                 subtitle_font: $('#rdFont').value, subtitle_size: Number($('#rdSubSize').value),
                 encoder: $('#rdEncoder').value },
-      pipeline: { mock: $('#rdMock').checked },
+      pipeline: { mock: $('#rdMock').checked, budget: Number($('#plBudget')?.value || 0) },
     };
     try {
       S.settings = (await api('/api/settings', { method: 'POST', body })).settings;

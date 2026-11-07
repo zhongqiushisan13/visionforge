@@ -16,7 +16,7 @@
 
 ## 三十秒上手
 
-1. 下载 `VisionForge-v1.1.0-win64.zip`，解压到**有写权限的目录**（不要放 `C:\Program Files`）
+1. 下载 `VisionForge-v1.1.1-win64.zip`，解压到**有写权限的目录**（不要放 `C:\Program Files`）
 2. 双击 `VisionForge.exe`，等 3~5 秒自动体检
 3. 工作台点「新建项目」，写一句需求，勾上 **MOCK 模式**
 4. 点「一键成片」，等进度条走完

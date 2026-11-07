@@ -1,6 +1,7 @@
 """本地 API 服务：桌面壳（pywebview）与浏览器共用同一套接口。
 
-设计取向：单机、单用户、无鉴权；所有重活丢给 JobManager，接口只负责「提交 / 查询 / 落库」。
+设计取向：单机、单用户；接口默认带 token 鉴权 + Host 校验（见 web/security.py），
+所有重活丢给 JobManager，接口只负责「提交 / 查询 / 落库」。
 """
 
 from __future__ import annotations
@@ -13,12 +14,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
-from ..config import APP_ROOT, BUNDLE_ROOT, PROJECT_ROOT, Settings
+from ..config import APP_ROOT, BUNDLE_ROOT, PROJECT_ROOT, Settings, env_file_path, tighten_file_permissions
 from ..edit_commands import apply_ops, interpret
 from ..editing import FILTER_PRESETS, TITLE_POSITIONS, TRANSITIONS, timeline
 from ..llm import DeepSeek
@@ -26,7 +26,8 @@ from ..pipeline import Director
 from ..providers.comfyui import ComfyUIProvider
 from ..schemas import Project, Shot
 from ..sysprobe import auto_configure, doctor_summary
-from ..utils import find_ffmpeg, probe_duration, read_json
+from ..utils import find_ffmpeg, probe_duration, read_json, recent_warnings, reap_orphans
+from . import security
 from .jobs import MANAGER, Job
 
 
@@ -109,6 +110,7 @@ def _project_payload(p: Project) -> Dict[str, Any]:
                            for s in p.shots if s.keyframe), "")
     d["srt_url"] = _media_url(slug, "output", "", p.path("output") / "subtitles.srt")
     d["counts"] = p.counts()
+    d["costs"] = p.meta.get("costs") or {"total": 0.0, "entries": []}
     enabled = [s for s in p.shots if s.enabled]
     starts, total = timeline(enabled, 0.4)
     d["timeline"] = {"ids": [s.id for s in enabled], "starts": starts, "total": total}
@@ -131,7 +133,9 @@ def _summary(p: Project) -> Dict[str, Any]:
 
 
 def _write_env(updates: Dict[str, str]) -> None:
-    env_path = PROJECT_ROOT / ".env"
+    """设置页「保存设置」落盘：优先写到用户目录（拷走便携包不会带走 Key）。"""
+    env_path = env_file_path()
+    env_path.parent.mkdir(parents=True, exist_ok=True)
     lines: List[str] = []
     if env_path.exists():
         lines = env_path.read_text(encoding="utf-8").splitlines()
@@ -148,6 +152,7 @@ def _write_env(updates: Dict[str, str]) -> None:
         if key not in seen:
             out.append(f"{key}={val}")
     env_path.write_text("\n".join(out).strip() + "\n", encoding="utf-8")
+    tighten_file_permissions(env_path)
     for key, val in updates.items():
         os.environ[key] = val
 
@@ -170,13 +175,28 @@ def _guard_busy() -> None:
 # --------------------------------------------------------------------------- #
 def create_app() -> FastAPI:
     app = FastAPI(title="VisionForge", version=__version__, docs_url="/api/docs")
-    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
-                       allow_headers=["*"])
+    # 前后端同源，不需要 CORS；跨源请求交给 GuardMiddleware 挡（token + Host）
+    token = security.load_or_create_token()
+    security.install(app, token)
+    # 上次崩溃可能留下还在跑的 ffmpeg，先清场
+    try:
+        reap_orphans()
+    except Exception:
+        pass
 
     # ---------------- 基础 ---------------- #
+    @app.get("/api/health")
+    def health() -> Dict[str, Any]:
+        """无鉴权探活：只报版本与是否就绪，不泄项目信息。"""
+        return {"ok": True, "version": __version__}
+
     @app.get("/", response_class=HTMLResponse)
     def index() -> HTMLResponse:
-        return HTMLResponse((STATIC / "index.html").read_text(encoding="utf-8"))
+        html = (STATIC / "index.html").read_text(encoding="utf-8")
+        resp = HTMLResponse(security.inject_token(html, token))
+        resp.set_cookie(security.TOKEN_COOKIE, token, httponly=True,
+                        samesite="strict", secure=False, path="/")
+        return resp
 
     @app.get("/api/bootstrap")
     def bootstrap() -> Dict[str, Any]:
@@ -217,7 +237,10 @@ def create_app() -> FastAPI:
     @app.get("/api/system/doctor")
     def doctor() -> Dict[str, Any]:
         s = _settings()
-        out: Dict[str, Any] = {"deepseek": s.deepseek.enabled, "minimax": s.minimax.enabled}
+        out: Dict[str, Any] = {"deepseek": s.deepseek.enabled, "minimax": s.minimax.enabled,
+                               "env_file": str(env_file_path()),
+                               "recent_warnings": recent_warnings(10),
+                               "api_guard": not security.unsafe_mode()}
         try:
             sysinfo = doctor_summary()
             out.update({"system": sysinfo, "recommend": sysinfo.get("recommend"),
@@ -293,7 +316,10 @@ def create_app() -> FastAPI:
                        "subtitle_font": s.render.subtitle_font,
                        "subtitle_size": s.render.subtitle_size,
                        "bgm_volume": s.render.bgm_volume, "transition": s.render.transition},
-            "pipeline": {"mock": s.pipeline.mock, "workers": s.pipeline.max_workers},
+            "pipeline": {"mock": s.pipeline.mock, "workers": s.pipeline.max_workers,
+                         "budget": s.pipeline.budget},
+            "security": {"env_file": str(env_file_path()),
+                         "api_guard": not security.unsafe_mode()},
         }
 
     @app.post("/api/settings")
@@ -350,7 +376,7 @@ def create_app() -> FastAPI:
                                       "subtitle_size", "bgm_volume", "transition", "encoder") if k in render})
         pipe = payload.get("pipeline") or {}
         if pipe:
-            _merge_config("pipeline", {k: pipe[k] for k in ("mock", "max_workers") if k in pipe})
+            _merge_config("pipeline", {k: pipe[k] for k in ("mock", "max_workers", "budget") if k in pipe})
         return {"ok": True, "settings": get_settings()}
 
     # ---------------- 项目 ---------------- #
@@ -722,6 +748,27 @@ def create_app() -> FastAPI:
         if not str(target).startswith(str(base)) or not target.exists() or target.is_dir():
             raise HTTPException(404, "文件不存在")
         return FileResponse(str(target), headers={"Cache-Control": "no-cache"})
+
+    # ---------------- 成本小结 ---------------- #
+    @app.get("/api/projects/{slug}/costs")
+    def project_costs(slug: str) -> Dict[str, Any]:
+        """预算护栏的账本：每次付费调用记一条，可导出文本小结。"""
+        p = _load(slug)
+        costs = p.meta.get("costs") or {"total": 0.0, "entries": []}
+        budget = _settings().pipeline.budget
+        by_provider: Dict[str, Dict[str, Any]] = {}
+        for e in costs.get("entries", []):
+            slot = by_provider.setdefault(e.get("provider", "?"), {"calls": 0, "est": 0.0})
+            slot["calls"] += 1
+            slot["est"] += float(e.get("est", 0.0))
+        lines = [f"《{p.title}》 成本小结（估算，非账单）", ""]
+        for name, slot in sorted(by_provider.items()):
+            lines.append(f"- {name}: {slot['calls']} 次，约 ¥{slot['est']:.2f}")
+        lines.append(f"- 合计: ¥{costs.get('total', 0.0):.2f}"
+                     + (f" / 上限 ¥{budget:.2f}" if budget else "（未设上限）"))
+        return {"slug": slug, "total": costs.get("total", 0.0), "budget": budget,
+                "by_provider": by_provider, "entries": costs.get("entries", []),
+                "summary": "\n".join(lines)}
 
     app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
     return app

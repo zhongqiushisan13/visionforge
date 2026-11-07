@@ -7,10 +7,12 @@ import os
 import random
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
 import unicodedata
+from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, Sequence, TypeVar
 
@@ -24,6 +26,21 @@ _COLOR = {
     "yellow": "\033[33m", "blue": "\033[36m", "bold": "\033[1m", "reset": "\033[0m",
 }
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+_RECENT_WARNINGS: deque[str] = deque(maxlen=100)
+
+
+def _remember_warning(msg: str) -> None:
+    _RECENT_WARNINGS.append(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}")
+
+
+def recent_warnings(limit: int = 10) -> list[str]:
+    """doctor 页展示最近的警告/被吞异常，避免失败只表现为“没动”。"""
+    return list(_RECENT_WARNINGS)[-max(1, limit):]
+
+
+def swallowed(context: str, exc: BaseException) -> None:
+    """记录一处被吞掉的异常。允许降级，但不允许无声降级。"""
+    warn(f"{context}：{type(exc).__name__}: {exc}")
 
 
 def _c(text: str, color: str) -> str:
@@ -43,6 +60,7 @@ def ok(msg: str) -> None:
 
 
 def warn(msg: str) -> None:
+    _remember_warning(msg)
     log(msg, tag="warn", color="yellow")
 
 
@@ -54,58 +72,223 @@ def err(msg: str) -> None:
 # ffmpeg / ffprobe
 # --------------------------------------------------------------------------- #
 _FFMPEG_CACHE: Optional[str] = None
+_FFMPEG_OK: dict[str, bool] = {}
+
+
+def _probe_ffmpeg(path: str) -> bool:
+    """用一条最小 drawtext 命令验活（占位片段、字幕烧录都依赖 drawtext）。
+
+    Windows 上的 ffmpeg 是各家自己编的，能力差异很大：缺 fontconfig 配置时会
+    刷 `Fontconfig error`，个别构建在并发下还出现过 0xC0000005 崩溃。
+    与其等出片时才炸，不如启动时先验一遍；不过的直接跳过。
+    """
+    if path in _FFMPEG_OK:
+        return _FFMPEG_OK[path]
+    cmd = [
+        path, "-hide_banner", "-loglevel", "error", "-nostdin",
+        "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.1",
+        "-vf", "drawtext=text='vf':fontcolor=white:fontsize=10:x=2:y=2",
+        "-frames:v", "1", "-f", "null", "-",
+    ]
+    kwargs: dict[str, Any] = dict(capture_output=True, timeout=30)
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        proc = subprocess.run(cmd, **kwargs)
+        ok_flag = proc.returncode == 0
+        if not ok_flag:
+            warn(f"{Path(path).name} 自检失败（退出码 {proc.returncode}），换下一个 ffmpeg")
+    except Exception as exc:  # 超时 / 无法执行
+        warn(f"{Path(path).name} 自检异常：{type(exc).__name__}，换下一个 ffmpeg")
+        ok_flag = False
+    _FFMPEG_OK[path] = ok_flag
+    return ok_flag
 
 
 def find_ffmpeg() -> str:
-    """按 env → PATH → imageio-ffmpeg 内置 的顺序找 ffmpeg。"""
+    """按 环境变量 → 打包自带 → PATH 的顺序找 ffmpeg，并逐个做 drawtext 自检。
+
+    为什么要自带优先：打包版里那条 ffmpeg 是构建时锁定的，codec / libass / xfade
+    都可预期；PATH 上的可能是任何构建（实测 WinGet 装完 Gyan 的 full 构建，在
+    并发生成占位画面时出现过 0xC0000005 崩溃，换自带的那条就正常）。
+    自检仍然保留——真碰到跑不了 drawtext 的构建，直接跳过，别等到出片才炸。
+    """
     global _FFMPEG_CACHE
     if _FFMPEG_CACHE:
         return _FFMPEG_CACHE
-    candidates = [os.environ.get("VF_FFMPEG", ""), shutil.which("ffmpeg") or ""]
-    for c in candidates:
-        if c and Path(c).exists():
-            _FFMPEG_CACHE = c
-            return c
+
+    env_pick = os.environ.get("VF_FFMPEG", "")
+    bundled = ""
     try:
         import imageio_ffmpeg
 
         exe = imageio_ffmpeg.get_ffmpeg_exe()
         if exe and Path(exe).exists():
-            _FFMPEG_CACHE = exe
-            return exe
+            bundled = exe
     except Exception:
         pass
-    raise RuntimeError(
-        "找不到 ffmpeg。装一个（winget install Gyan.FFmpeg）或执行 python -m pip install imageio-ffmpeg"
-    )
+    system_pick = shutil.which("ffmpeg") or ""
+
+    order = [env_pick]
+    if getattr(sys, "frozen", False):
+        order += [bundled, system_pick]      # 打包版：自带的更可预期
+    else:
+        order += [system_pick, bundled]      # 源码运行：尊重用户环境
+    candidates: list[str] = []
+    for c in order:
+        if c and Path(c).exists() and c not in candidates:
+            candidates.append(c)
+    if not candidates:
+        raise RuntimeError(
+            "找不到 ffmpeg。装一个（winget install Gyan.FFmpeg）或执行 python -m pip install imageio-ffmpeg"
+        )
+    for c in candidates:
+        if _probe_ffmpeg(c):
+            if c != candidates[0]:
+                log(f"ffmpeg 选用 {c}（前一个候选未通过自检）", tag="env")
+            _FFMPEG_CACHE = c
+            return c
+    warn("所有 ffmpeg 候选都没通过 drawtext 自检，沿用第一个；字幕/占位画面可能出错")
+    _FFMPEG_CACHE = candidates[0]
+    return _FFMPEG_CACHE
 
 
 def find_ffprobe() -> Optional[str]:
-    p = shutil.which("ffprobe")
-    if p:
-        return p
-    ff = Path(find_ffmpeg())
-    guess = ff.with_name(ff.stem.replace("ffmpeg", "ffprobe") + ff.suffix)
-    return str(guess) if guess.exists() else None
+    # 先找与已选 ffmpeg 同目录的 ffprobe，避免 PATH 上是另一套构建
+    try:
+        ff = Path(find_ffmpeg())
+        guess = ff.with_name(ff.stem.replace("ffmpeg", "ffprobe") + ff.suffix)
+        if guess.exists():
+            return str(guess)
+    except Exception:
+        pass
+    return shutil.which("ffprobe") or None
+
+
+def _run_dir() -> Path:
+    from .config import APP_ROOT
+
+    return ensure_dir(APP_ROOT / "run")
+
+
+def _child_pid_file(pid: int) -> Path:
+    return _run_dir() / f"child-{os.getpid()}-{pid}.json"
+
+
+def _register_child(pid: int, cmd: Sequence[str]) -> Optional[Path]:
+    """登记子进程，供下次启动时清理崩溃后留下的孤儿 ffmpeg。"""
+    try:
+        path = _child_pid_file(pid)
+        path.write_text(json.dumps({"owner": os.getpid(), "pid": pid,
+                                    "cmd": [str(x) for x in cmd], "ts": now_iso()},
+                                   ensure_ascii=False), encoding="utf-8")
+        return path
+    except OSError as exc:
+        swallowed("登记子进程失败", exc)
+        return None
+
+
+def _unregister_child(path: Optional[Path]) -> None:
+    if not path:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _pid_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        proc = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=10)
+        return str(pid) in (proc.stdout or "")
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _kill_tree(pid: int) -> None:
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                       capture_output=True, timeout=20)
+    else:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except OSError:
+            os.kill(pid, signal.SIGKILL)
+
+
+def reap_orphans() -> int:
+    """清理上一轮崩溃留下的 ffmpeg/ffprobe 子进程。
+
+    只处理 `run/child-*.json` 里登记的进程，并且要求登记它的 VisionForge
+    主进程已经不在；不会扫全系统的 ffmpeg，避免误杀用户自己的转码任务。
+    """
+    killed = 0
+    run_dir = _run_dir()
+    for meta_path in run_dir.glob("child-*.json"):
+        data = read_json(meta_path, default={}) or {}
+        try:
+            owner = int(data.get("owner") or 0)
+            pid = int(data.get("pid") or 0)
+        except (TypeError, ValueError):
+            meta_path.unlink(missing_ok=True)
+            continue
+        cmd = [str(x) for x in data.get("cmd") or []]
+        exe = Path(cmd[0]).name.lower() if cmd else ""
+        if owner == os.getpid() or _pid_running(owner):
+            continue
+        if pid and _pid_running(pid) and exe.startswith(("ffmpeg", "ffprobe")):
+            try:
+                _kill_tree(pid)
+                killed += 1
+                warn(f"已清理上次崩溃留下的 {exe}（PID {pid}）")
+            except Exception as exc:
+                swallowed(f"清理孤儿进程失败（PID {pid}）", exc)
+        meta_path.unlink(missing_ok=True)
+    return killed
 
 
 def run(cmd: Sequence[str], *, timeout: int = 600, check: bool = False,
         quiet: bool = True, cwd: Optional[Path | str] = None) -> subprocess.CompletedProcess:
-    """跑子进程；Windows 下不弹黑框，统一 UTF-8。"""
+    """跑子进程；Windows 下不弹黑框，统一 UTF-8，并登记 PID 供孤儿清理。"""
     kwargs: dict[str, Any] = dict(
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace",
     )
     if cwd:
         kwargs["cwd"] = str(cwd)
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    proc = subprocess.run(list(cmd), **kwargs)
-    if check and proc.returncode != 0:
-        tail = (proc.stderr or "")[-1500:]
-        raise RuntimeError(f"命令失败({proc.returncode}): {' '.join(map(str, cmd[:6]))}...\n{tail}")
-    if not quiet and proc.stderr:
-        log(proc.stderr[-800:], tag="ffmpeg")
-    return proc
+    else:
+        kwargs["start_new_session"] = True
+    proc = subprocess.Popen(list(cmd), **kwargs)
+    pid_file = _register_child(proc.pid, cmd)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            _kill_tree(proc.pid)
+        finally:
+            stdout, stderr = proc.communicate()
+        raise
+    finally:
+        _unregister_child(pid_file)
+    done = subprocess.CompletedProcess(list(cmd), proc.returncode, stdout, stderr)
+    if check and done.returncode != 0:
+        tail = (done.stderr or "")[-1500:]
+        # 崩溃类退出码给个十六进制，0xC0000005 比 3221225477 好认得多
+        code = done.returncode
+        label = f"{code} / 0x{code & 0xFFFFFFFF:08X}" if code < 0 or code > 255 else str(code)
+        raise RuntimeError(f"命令失败({label}): {' '.join(map(str, cmd[:6]))}...\n{tail}")
+    if not quiet and done.stderr:
+        log(done.stderr[-800:], tag="ffmpeg")
+    return done
 
 
 def ffmpeg(args: Sequence[str], *, timeout: int = 1800, quiet: bool = True,

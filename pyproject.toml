@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "visionforge"
-version = "1.1.0"
+version = "1.1.1"
 description = "DeepSeek 编剧 + ComfyUI/LoRA 关键帧 + MiniMax H3 镜头 + ffmpeg 剪辑的桌面级 AI 视频编导台"
 readme = "README.md"
 requires-python = ">=3.10"
