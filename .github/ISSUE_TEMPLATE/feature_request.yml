@@ -1,0 +1,33 @@
+name: Feature request
+description: 想要的新能力（请说明它解决什么问题）
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提之前先看一眼 README 的「没做的部分」——多轨、关键帧、蒙版、抠像这些是有意不做的。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你遇到什么问题
+      placeholder: 生成的镜头里人物手部崩了，但只能整条重拍，改一句提示词要等十分钟……
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: 你希望怎么解决
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 涉及模块
+      options:
+        - 编剧 / 分镜
+        - 关键帧 / LoRA
+        - 视频生成 / 本地模型
+        - 剪辑 / 时间线
+        - 界面
+        - 打包 / 安装
+        - 其他

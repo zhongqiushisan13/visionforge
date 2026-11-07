@@ -1,0 +1,57 @@
+name: Bug report
+description: 出片失败、界面异常、安装不上——都走这里
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        报 bug 前先跑一次设置页的「系统自检」，把结果截图/复制过来，能省一半来回。
+        **不要在 issue 里贴 API Key。**
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 现象 + 你期望的结果
+      placeholder: 点「一键成片」后进度卡在 20%，日志没有任何报错……
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 用 mock 新建 30s 项目
+        2. 时间线把第 2 镜改成叠化 0.6s
+        3. 点合成
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: 视频通道
+      options:
+        - 云端 MiniMax
+        - 本地兼容网关
+        - ComfyUI 视频工作流
+        - 占位片 / MOCK
+        - 还没配好
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: 设置页底部或 exe 属性里的版本号
+      placeholder: v1.1.0
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志
+      description: `logs/runtime.log` 尾部 50 行，或任务面板的报错
+      render: text
+  - type: textarea
+    id: sysinfo
+    attributes:
+      label: 系统自检结果
+      description: 设置页 → 系统自检，复制那几行
+      render: text

@@ -1,0 +1,28 @@
+{
+  "comfy": {
+    "base_url": "http://127.0.0.1:8188",
+    "workflow": "sdxl_txt2img.json",
+    "checkpoint": "",
+    "default_lora": "",
+    "lora_strength": 0.8,
+    "steps": 28,
+    "cfg": 6.5,
+    "width": 1344,
+    "height": 768
+  },
+  "render": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "subtitle": true,
+    "subtitle_font": "Microsoft YaHei",
+    "subtitle_size": 54,
+    "bgm_volume": 0.18,
+    "transition": "fade"
+  },
+  "pipeline": {
+    "mock": false,
+    "max_workers": 3,
+    "projects_dir": "projects"
+  }
+}
