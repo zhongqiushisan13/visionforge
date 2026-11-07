@@ -53,3 +53,6 @@ desktop.ini
 # ---- WorkBuddy 项目数据 ----
 .workbuddy/
 *.genie
+
+# 会话导出包
+exports/
