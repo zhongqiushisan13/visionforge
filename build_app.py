@@ -14,6 +14,13 @@ import sys
 import time
 from pathlib import Path
 
+# Windows 控制台默认不是 UTF-8（CI 上是 cp1252），中文日志会直接 UnicodeEncodeError 把构建打断
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    except (AttributeError, ValueError):
+        pass
+
 ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist" / "VisionForge"
 VERSION_INFO = ROOT / "build" / "version_info.txt"
