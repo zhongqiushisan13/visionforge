@@ -353,6 +353,15 @@ python tools/e2e_test.py
 
 覆盖：建项目 → 全量渲染 → 改字幕/时长/trim → 停用镜头 → 重排 → 合成 → 校验成片存在、停用镜头被排除、SRT 含人工修改 → 单镜重拍 → 二次合成。
 
+验证本地 H3 网关（不需要真模型）：
+
+```bash
+# 一个 60 行的 mock 服务，实现 /v2/video_generation 与查询接口
+python tools/mock_h3_server.py --port 8798 --video projects/demo/clips/S01.mp4
+
+MINIMAX_MODE=local MINIMAX_BASE_URL=http://127.0.0.1:8798 python run_app.py
+```
+
 开发期界面回归：
 
 ```bash
