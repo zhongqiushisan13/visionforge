@@ -21,6 +21,7 @@
 - 打包版优先使用内置、版本锁定的 ffmpeg；所有 ffmpeg 候选启动时先跑最小 `drawtext` 自检。
 - 子进程登记到 `run/child-*.json`，下次启动自动清理崩溃遗留的孤儿 ffmpeg/ffprobe。
 - 设置页/系统自检展示最近的警告，减少“失败被吞掉、用户只看到没动”的情况。
+- 日志输出兼容非 UTF-8 控制台：英文版 Windows 的 cp1252 终端下，中文日志不再抛 `UnicodeEncodeError` 打断提交任务、切换 provider 等关键路径。
 
 ### 本地 MiniMax H3
 
