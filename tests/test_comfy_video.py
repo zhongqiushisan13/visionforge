@@ -36,7 +36,7 @@ SDXL_WORKFLOW = {
 
 def make_provider(workflow):
     s = Settings()
-    s.comfy.width, s.comfy.height = 608, 352
+    s.comfy.width, s.comfy.height = 1344, 768      # 关键帧出图尺寸，不该污染视频
     s.render.fps = 24
     s.minimax.video_workflow = "wf.json"
     p = ComfyVideoProvider(s)
@@ -55,11 +55,45 @@ class TestComfyVideoPatch(unittest.TestCase):
             Shot(id="S01", duration=5, image_prompt="legacy prompt"), None)
         self.assertEqual(wf["6"]["inputs"]["text"], "legacy prompt")
 
-    def test_size_and_frame_count_patched(self):
-        wf, _ = make_provider(H3_WORKFLOW).patch_workflow(
-            Shot(id="S01", duration=5), None)
+    def test_size_kept_from_workflow_by_default(self):
+        """没配 MINIMAX_VIDEO_WIDTH 就沿用工作流分辨率，别拿关键帧的 1344x768 去顶。"""
+        wf, _ = make_provider(H3_WORKFLOW).patch_workflow(Shot(id="S01", duration=5), None)
+        self.assertEqual((wf["6"]["inputs"]["width"], wf["6"]["inputs"]["height"]), (1024, 576))
+
+    def test_size_overridden_when_configured(self):
+        p = make_provider(H3_WORKFLOW)
+        p.video_cfg.video_width, p.video_cfg.video_height = 608, 352
+        wf, _ = p.patch_workflow(Shot(id="S01", duration=5), None)
         self.assertEqual((wf["6"]["inputs"]["width"], wf["6"]["inputs"]["height"]), (608, 352))
-        self.assertEqual(wf["6"]["inputs"]["length"], 120)      # 5s × 24fps
+
+    def test_frame_count_aligned_to_h3_grid(self):
+        """H3 帧数必须是 4n+1：5s×24fps=120 → 121，3s=72 → 73。"""
+        wf, _ = make_provider(H3_WORKFLOW).patch_workflow(Shot(id="S01", duration=5), None)
+        self.assertEqual(wf["6"]["inputs"]["length"], 121)
+        self.assertEqual((wf["6"]["inputs"]["length"] - 1) % 4, 0)
+        wf3, _ = make_provider(H3_WORKFLOW).patch_workflow(Shot(id="S02", duration=3), None)
+        self.assertEqual(wf3["6"]["inputs"]["length"], 73)
+
+    def test_frame_count_capped_at_h3_ceiling(self):
+        wf, _ = make_provider(H3_WORKFLOW).patch_workflow(Shot(id="S01", duration=30), None)
+        self.assertEqual(wf["6"]["inputs"]["length"], 361)      # 15s × 24fps，H3 上限
+
+    def test_scheduler_steps_overridable(self):
+        wf_with_sched = dict(H3_WORKFLOW)
+        wf_with_sched["9"] = {"class_type": "BasicScheduler",
+                              "inputs": {"scheduler": "simple", "steps": 4, "denoise": 1.0}}
+        wf, _ = make_provider(wf_with_sched).patch_workflow(Shot(id="S01", duration=5), None)
+        self.assertEqual(wf["9"]["inputs"]["steps"], 4)          # 默认不动 turbo 的 4 步
+        p = make_provider(wf_with_sched)
+        p.video_cfg.video_steps = 6
+        wf6, _ = p.patch_workflow(Shot(id="S01", duration=5), None)
+        self.assertEqual(wf6["9"]["inputs"]["steps"], 6)
+
+    def test_t2v_mode_drops_first_frame(self):
+        p = make_provider(H3_WORKFLOW)
+        p.video_cfg.local_image_mode = "skip"
+        wf, _ = p.patch_workflow(Shot(id="S01", duration=5), None)
+        self.assertNotIn("first_frame", wf["6"]["inputs"])
 
     def test_random_noise_seed_injected(self):
         wf, seed = make_provider(H3_WORKFLOW).patch_workflow(

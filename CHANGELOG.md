@@ -1,10 +1,20 @@
 # Changelog
 
-## 未发布
+## v1.1.2 - 2026-11-08
 
 ### 修复
 
 - 系统自检在 Windows 11 上误报 "Windows 10"：Win11 内部版本号仍是 10.0，Python 3.11 的 `platform.release()` 不识别；改为按 build 号（≥22000 即 Win11）判断，并补充显示 build 号。
+
+### 本地 MiniMax H3（ComfyUI + GGUF）
+
+- 视频工作流的分辨率/步数改由 `MINIMAX_VIDEO_WIDTH` / `MINIMAX_VIDEO_HEIGHT` / `MINIMAX_VIDEO_STEPS` 单独控制，不填就沿用工作流自带的值；不再误用关键帧出图的 `COMFYUI_WIDTH/HEIGHT`（此前会把 H3 的 608×352 顶成 1344×768 直接爆显存）。
+- H3 帧数自动对齐 4n+1（时序 VAE 按 4 帧下采样，120 帧会被截成 117），并按 H3 上限 15 秒截断。
+- `MINIMAX_LOCAL_IMAGE_MODE=skip` 时提交前自动摘掉首帧连线，支持纯文生视频。
+- `BasicScheduler` 步数可通过 `MINIMAX_VIDEO_STEPS` 覆盖（H3 是 4 步 turbo LoRA，别套 SD 的 28 步）。
+- 通道体检不再在 `mode=comfyui` 时去 ping `api.minimax.io`。
+- README 补充「本地 H3（ComfyUI + GGUF 量化）」章节与踩坑说明，`.env.h3.example` 同步更新。
+- 测试数从 48 增至 53：新增分辨率沿用/覆盖、帧数对齐与上限、调度器步数、纯文生视频等用例。
 
 ## v1.1.1 - 2026-11-07
 

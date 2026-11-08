@@ -87,7 +87,8 @@ class Providers:
     # ---------------- 体检 ---------------- #
     def probe_video(self) -> Dict[str, object]:
         out: Dict[str, object] = {"chain": [p.name for p in self.video_chain()]}
-        if self.minimax:
+        # 只探实际会用的通道：mode=comfyui 时不该去 ping api.minimax.io
+        if self.minimax and self.minimax in self.video_chain():
             out["minimax"] = self.minimax.probe()
         if self.comfy_video:
             out["comfyui_video"] = self.comfy_video.probe()

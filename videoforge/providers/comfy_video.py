@@ -29,6 +29,9 @@ TEXT_KEYS = ("text", "prompt")
 # 需要同步成片帧率的节点：保存节点 + CreateVideo（后者只负责打 fps 元数据）
 FPS_CLASSES = ("SaveVideo", "VHS_VideoCombine", "SaveAnimatedWEBP", "CreateVideo")
 VIDEO_EXT = (".mp4", ".webm", ".mov", ".mkv", ".gif")
+# H3 的时序 VAE 按 4 帧下采样，帧数必须是 4n+1，否则尾部帧被丢掉
+H3_TEMPORAL_ALIGN = 4
+H3_MAX_SECONDS = 15
 
 
 class ComfyVideoProvider(ComfyUIProvider):
@@ -76,13 +79,27 @@ class ComfyVideoProvider(ComfyUIProvider):
                 return nid
         return None
 
+    @staticmethod
+    def _h3_frames(frames: int, fps: int) -> int:
+        """H3 的帧数必须落在 4n+1 上，且单镜最长 15 秒。"""
+        grid = max(H3_TEMPORAL_ALIGN + 1,
+                   int(round((frames - 1) / H3_TEMPORAL_ALIGN)) * H3_TEMPORAL_ALIGN + 1)
+        cap = int(round((H3_MAX_SECONDS * fps - 1) / H3_TEMPORAL_ALIGN)) * H3_TEMPORAL_ALIGN + 1
+        return min(grid, cap)
+
     def patch_workflow(self, shot: Shot, keyframe: Optional[Path]) -> tuple[Dict[str, Any], int]:
         if not self.workflow_name:
             raise ProviderError("没有配置 ComfyUI 视频工作流（MINIMAX_VIDEO_WORKFLOW）", retryable=False)
         wf = copy.deepcopy(self.load_workflow(self.workflow_name))
         fps = max(1, self.s.render.fps)
-        frames = max(8, int(shot.duration * fps))
+        frames = max(8, int(round(shot.duration * fps)))
         seed = shot.seed or int(time.time() * 1000) % 2_147_483_647
+        # 只在显式配置时覆盖分辨率/步数；没配就尊重工作流本身的设定，
+        # 免得把 H3 的 608x352 顶成关键帧出图的 1344x768 直接爆显存
+        width = self.video_cfg.video_width or None
+        height = self.video_cfg.video_height or None
+        steps = self.video_cfg.video_steps or 0
+        skip_image = str(self.video_cfg.local_image_mode).lower() in ("skip", "none", "text", "t2v")
 
         pos, neg = self._find(wf, "POSITIVE"), self._find(wf, "NEGATIVE")
         for nid, text in ((pos, shot.video_prompt or shot.image_prompt),
@@ -104,18 +121,27 @@ class ComfyVideoProvider(ComfyUIProvider):
             if cls in ("KSampler", "KSamplerAdvanced"):
                 inputs["seed"] = seed
                 if "steps" in inputs:
-                    inputs["steps"] = max(8, int(self.cfg.steps))
+                    inputs["steps"] = max(8, int(steps or self.cfg.steps))
                 if "cfg" in inputs:
                     inputs["cfg"] = self.cfg.cfg
             # 自定义采样链（SamplerCustomAdvanced）用 RandomNoise 提供种子
             if cls == "RandomNoise" and "noise_seed" in inputs:
                 inputs["noise_seed"] = seed
-            if "width" in inputs and "height" in inputs:
-                inputs["width"] = self.cfg.width
-                inputs["height"] = self.cfg.height
+            # H3 走 BasicScheduler + 4 步 turbo LoRA，步数别用 SD 的 28
+            if cls == "BasicScheduler" and steps and "steps" in inputs:
+                inputs["steps"] = max(1, int(steps))
+            if width and height and "width" in inputs and "height" in inputs:
+                inputs["width"] = width
+                inputs["height"] = height
+            node_frames = frames
+            if cls.startswith("MiniMaxH3") and cls.endswith("ToVideo"):
+                node_frames = self._h3_frames(frames, fps)
             for key in FRAME_KEYS:
                 if key in inputs and isinstance(inputs[key], (int, float)):
-                    inputs[key] = frames
+                    inputs[key] = node_frames
+            if cls.startswith("MiniMaxH3") and skip_image:
+                # 纯文生视频：把首帧连线摘掉，H3 会自己从噪声起
+                inputs.pop("first_frame", None)
             if cls == "LoadImage" and keyframe and Path(keyframe).exists():
                 inputs["image"] = self.upload_image(Path(keyframe))
             if (cls in SAVE_CLASSES or cls in FPS_CLASSES) and cls not in ("LoadImage",):

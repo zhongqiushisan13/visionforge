@@ -189,18 +189,42 @@ MINIMAX_VIDEO_MODEL=MiniMax-H3
 
 | 标题 / 类 | 作用 |
 |---|---|
-| `POSITIVE` / `NEGATIVE` | 提示词 |
-| 含 `width` + `height` 的节点 | 分辨率 |
-| 含 `length` / `num_frames` / `video_frames` 的节点 | 帧数（时长 × fps） |
-| `KSampler` | seed / steps / cfg |
+| `POSITIVE` / `NEGATIVE` | 提示词（`text` 与 H3 的 `prompt` 都认） |
+| 含 `width` + `height` 的节点 | 分辨率（配了 `MINIMAX_VIDEO_WIDTH/HEIGHT` 才覆盖，否则用工作流自带值） |
+| 含 `length` / `num_frames` / `video_frames` 的节点 | 帧数（时长 × fps；H3 自动对齐到 4n+1，上限 15s） |
+| `KSampler` / `BasicScheduler` | seed / steps / cfg |
+| `RandomNoise` | `noise_seed`（自定义采样链的种子） |
 | `LOAD_IMAGE` | 自动上传关键帧作首帧 |
-| `SaveVideo` / `VHS_VideoCombine` | 输出（`gifs` 里的 mp4 也认） |
+| `SaveVideo` / `VHS_VideoCombine` / `CreateVideo` | 输出与帧率元数据 |
 
 ```bash
 MINIMAX_MODE=comfyui
 MINIMAX_VIDEO_WORKFLOW=wan21_i2v.json
 COMFYUI_BASE_URL=http://127.0.0.1:8188
+# 视频分辨率/步数不填就沿工作流；填了才覆盖（别拿关键帧的 1344x768 去顶 8GB 显卡）
+# MINIMAX_VIDEO_WIDTH=608
+# MINIMAX_VIDEO_HEIGHT=352
+# MINIMAX_VIDEO_STEPS=4
 ```
+
+### 4. 本地 H3（ComfyUI + GGUF 量化）
+
+仓库自带 `workflows/minimax_h3_gguf_i2v.json`，对应 ComfyUI 原生的 H3 节点 + GGUF 量化权重，8GB 显存可跑 608×352：
+
+```
+models/unet/     minimax_h3_fl2va_pruned-Q2_K.gguf
+models/loras/    minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors
+models/clip/     qwen3vl_32b_minimax_h3-Q2_K_M.gguf
+models/vae/      minimax_h3_video_vae_fp16.safetensors
+```
+
+配好 ComfyUI 服务后，把 `.env.h3.example` 的内容复制到 `%APPDATA%\VisionForge\.env`（macOS/Linux：`~/.config/visionforge/.env`）即可，重启应用后系统自检里镜头通道会显示 `comfyui-video`。这条路的坑与绕法：
+
+- **帧数必须是 4n+1**：H3 的时序 VAE 按 4 帧下采样，120 帧会被截成 117；程序按镜头时长自动对齐（5s×24fps → 121 帧）。
+- **步数不要用 SD 的 28**：H3 走 4 步 turbo LoRA，`MINIMAX_VIDEO_STEPS=4` 才是它的正常档位。
+- **首帧图生视频**：没有 SDXL checkpoint 时关键帧会用本地占位图，链路仍然通；想真出画就把 `COMFYUI_CHECKPOINT` 指向一个 SDXL 模型。
+- **纯文生视频**：`MINIMAX_LOCAL_IMAGE_MODE=skip`，提交前会自动摘掉首帧连线。
+- **超时**：本地 8GB 显卡 5 秒镜头约 5 分钟，`MINIMAX_VIDEO_TIMEOUT=5400` 别按云端的 2400 秒算。
 
 ### 混合配置
 

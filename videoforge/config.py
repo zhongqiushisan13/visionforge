@@ -170,6 +170,11 @@ class MiniMaxConfig:
     # ComfyUI 视频工作流（本地出片第二条路）
     video_workflow: str = ""
     video_timeout: int = 2400
+    # 视频工作流的出片分辨率/步数；0 = 沿用工作流里写死的值
+    # （不能直接复用 COMFYUI_WIDTH/HEIGHT，那是关键帧出图的尺寸）
+    video_width: int = 0
+    video_height: int = 0
+    video_steps: int = 0
     video_model: str = "MiniMax-H3"          # MiniMax-H3 / -Highspeed / -Lite / -Max
     resolution: str = "768P"                  # 768P / 2K
     ratio: str = "16:9"
@@ -328,6 +333,9 @@ class Settings:
             query_path=_env("MINIMAX_QUERY_PATH", "/v2/query/video_generation/{task_id}"),
             video_workflow=_env("MINIMAX_VIDEO_WORKFLOW", ""),
             video_timeout=_env_int("MINIMAX_VIDEO_TIMEOUT", 2400),
+            video_width=_env_int("MINIMAX_VIDEO_WIDTH", 0),
+            video_height=_env_int("MINIMAX_VIDEO_HEIGHT", 0),
+            video_steps=_env_int("MINIMAX_VIDEO_STEPS", 0),
             video_model=_env("MINIMAX_VIDEO_MODEL", "MiniMax-H3"),
             resolution=_env("MINIMAX_RESOLUTION", "768P"),
             ratio=_env("MINIMAX_RATIO", "16:9"),
