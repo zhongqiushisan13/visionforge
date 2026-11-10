@@ -164,6 +164,21 @@ class TestNormalization(unittest.TestCase):
         self.assertTrue(DeepSeek._looks_like_model_error(400, '{"message":"Model Not Exist"}'))
         self.assertFalse(DeepSeek._looks_like_model_error(429, "rate limited"))
 
+    def test_empty_content_with_reasoning_gives_clear_error(self):
+        """思考型模型把预算花在 reasoning 上时，报错要说人话。"""
+        c = make("ollama", api_key="")
+        data = {"choices": [{"message": {"role": "assistant", "content": "",
+                                         "reasoning": "先想一下……"},
+                             "finish_reason": "length"}]}
+        with self.assertRaises(Exception) as ctx:
+            c._message(data)
+        self.assertIn("思考", str(ctx.exception))
+
+    def test_normal_content_unaffected(self):
+        c = make("openai")
+        msg = c._message({"choices": [{"message": {"role": "assistant", "content": "正常"}}]})
+        self.assertEqual(msg["content"], "正常")
+
 
 class TestAvailability(unittest.TestCase):
     def test_no_key_cloud_unavailable(self):

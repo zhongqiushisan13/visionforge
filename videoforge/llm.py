@@ -320,9 +320,18 @@ class DeepSeek:
             return {"role": "assistant", "content": text}
 
         try:
-            return data["choices"][0]["message"]
+            msg = data["choices"][0]["message"]
         except (KeyError, IndexError) as exc:
             raise LLMError(f"{self.label} 响应结构异常：{str(data)[:300]}") from exc
+        # 思考型模型（qwen3 / deepseek-reasoner 等）可能只给 reasoning、content 为空，
+        # 尤其在 max_tokens 被思考过程吃光时。直接说清楚，别让人以为是网络问题。
+        if not str(msg.get("content") or "").strip():
+            think = msg.get("reasoning") or msg.get("reasoning_content")
+            if think:
+                raise LLMError(
+                    f"{self.label} 只返回了思考内容（thinking），正文为空：把 max_tokens 调大、"
+                    f"关闭思考模式，或换一个非思考模型")
+        return msg
 
     def _with_fallback(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:

@@ -301,8 +301,9 @@ def create_app() -> FastAPI:
             return {"ok": False, **info, "error": "没有可用凭据：填 API Key，或把模式设为本地"}
         t0 = time.time()
         try:
+            # 思考型模型（qwen3 等）会先用几百 token 思考，给小预算只会拿到空正文
             sample = llm.text([{"role": "user", "content": "只回答两个字：正常"}],
-                              max_tokens=24, temperature=0)
+                              max_tokens=512, temperature=0)
             return {"ok": True, **info, "latency_ms": int((time.time() - t0) * 1000),
                     "sample": sample.strip()[:120], "usage": llm.usage}
         except Exception as exc:
