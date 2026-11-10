@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.2.0 - 2026-11-10
+
+### 多语言界面（9 种）
+
+- 新增运行时 i18n 引擎：简体中文、繁體中文、English、Français、Deutsch、日本語、한국어、Español、العربية。
+- 侧边栏新增语言选择器，选择结果存 `localStorage`，下次启动沿用；首次启动按系统语言自动匹配（zh-TW/HK 走繁體，其余按主语言）。
+- 阿拉伯语自动切换 `dir="rtl"`，侧边栏、时间线与表单镜像排布。
+- 词库以中文原文为 key（gettext 风格），共 318 条；带占位符的文案（`{n}` / `{sec}` / `{label}`）在 8 种语言里逐一校验占位符不丢失。
+- 支持 `?lang=en` 临时切语言（分享、截图、排错用）与 `#settings` / `#timeline` 深链。
+- 繁体词库由 OpenCC `s2twp` 做词级转换（影片/設定/檔案/網路），避免逐字直译。
+
+### 多模型接口（不再局限 DeepSeek）
+
+- 新增厂商注册表 `videoforge/llm_providers.py`，内置 11 个通道：DeepSeek、OpenAI（ChatGPT）、Anthropic（Claude）、Google（Gemini）、xAI（Grok）、智谱（GLM）、月之暗面（Kimi）、通义千问、OpenRouter、Ollama 本地、自定义 OpenAI 兼容网关。
+- 协议层一分为三：OpenAI Chat Completions、Claude Messages、Gemini generateContent；`LLMClient` 按 `protocol` 自动组装请求、归一化响应与用量。
+- 设置页新增「厂商 → 模型 → API Key → 测通道」四步；每家 Key 单独存槽位（`LLM_KEY_<PROVIDER>`），切回某家不用重填。
+- 新增 `POST /api/system/llm-check`：可用表单里尚未保存的值先测通，返回延迟、样例回复与用量。
+- 环境变量统一为 `LLM_PROVIDER` / `LLM_MODEL` / `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODE`；老的 `DEEPSEEK_*` 继续兼容，现有安装无需改动。
+- 模型不存在时按厂商错误格式识别并给出「检查模型名/账号权限」的明确提示；Claude 温度自动夹到 1.0，Gemini 用 `responseMimeType` 走 JSON 模式。
+- 云端调用默认跟随系统代理（`HTTP(S)_PROXY`），方便国内访问 OpenAI / Claude / Gemini / Grok。
+
+### 修复
+
+- 受限环境（沙箱、杀软拦截删除）下子进程登记文件删不掉会卡住启动与自检；新增 `VF_NO_CHILD_REGISTRY=1` 可关闭登记，排障用。
+- 系统自检在 Windows 11 上误报 "Windows 10"（随 v1.1.2 修复一并进入本版）。
+
+### 测试
+
+- 测试数从 53 增至 80：新增多厂商注册表/配置解析/三协议请求组装/响应归一化/模型回退，以及词库完整性、占位符一致性、语言列表与脚本加载顺序。
+
 ## v1.1.2 - 2026-11-08
 
 ### 修复

@@ -27,7 +27,7 @@ VERSION_INFO = ROOT / "build" / "version_info.txt"
 
 VERSION_TEXT = """VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 1, 2, 0), prodvers=(1, 1, 2, 0),
+    filevers=(1, 2, 0, 0), prodvers=(1, 2, 0, 0),
     mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)
   ),
   kids=[
@@ -35,11 +35,11 @@ VERSION_TEXT = """VSVersionInfo(
       StringTable('080404B0', [
         StringStruct('CompanyName', 'TONWIN'),
         StringStruct('FileDescription', 'VisionForge AI 视频编导台'),
-        StringStruct('FileVersion', '1.1.2.0'),
+        StringStruct('FileVersion', '1.2.0.0'),
         StringStruct('InternalName', 'VisionForge'),
         StringStruct('OriginalFilename', 'VisionForge.exe'),
         StringStruct('ProductName', 'VisionForge'),
-        StringStruct('ProductVersion', '1.1.2.0'),
+        StringStruct('ProductVersion', '1.2.0.0'),
         StringStruct('LegalCopyright', 'Copyright (C) 2026')
       ])
     ]),

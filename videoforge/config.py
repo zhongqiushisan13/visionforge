@@ -125,14 +125,20 @@ def _env_bool(key: str, default: bool = False) -> bool:
 # --------------------------------------------------------------------------- #
 @dataclass
 class DeepSeekConfig:
-    """任何 OpenAI 兼容端点都能当编剧大脑：DeepSeek 云、Ollama、vLLM、LM Studio。"""
+    """编剧大脑：任何一家大模型都能接（DeepSeek / OpenAI / Claude / Gemini / Grok / GLM / Kimi …）。
 
+    协议只有三类（openai / anthropic / gemini），厂商差异全在 llm_providers 里描述。
+    字段名保留 deepseek 是为了老配置兼容，语义上就是「剧本模型」。
+    """
+
+    provider: str = "deepseek"
+    protocol: str = "openai"
     api_key: str = ""
     base_url: str = "https://api.deepseek.com"
     # auto: 有 key 走云，没有但 base_url 是本地就走本地；cloud / local 强制
     mode: str = "auto"
     model: str = "deepseek-v4-flash"
-    fallback_models: tuple = ("deepseek-chat",)
+    fallback_models: tuple = ()
     temperature: float = 1.15
     max_tokens: int = 8192
     timeout: int = 240
@@ -140,6 +146,12 @@ class DeepSeekConfig:
     # deepseek-v4 系列支持 thinking 开关与 reasoning_effort
     thinking: bool = False
     reasoning_effort: str = ""
+
+    @property
+    def label(self) -> str:
+        from . import llm_providers
+
+        return llm_providers.get(self.provider).label
 
     @property
     def is_local(self) -> bool:
@@ -153,7 +165,13 @@ class DeepSeekConfig:
     def enabled(self) -> bool:
         if self.mode == "local":
             return bool(self.base_url)
+        if self.mode == "mock":
+            return False
         return bool(self.api_key) or (self.mode == "auto" and self.is_local)
+
+
+# 语义别名：新代码可以直接用 LLMConfig
+LLMConfig = DeepSeekConfig
 
 
 @dataclass
@@ -314,11 +332,37 @@ class Settings:
 
     @classmethod
     def _from_env(cls) -> "Settings":
+        from . import llm_providers
+
+        # ---- 剧本模型：LLM_* 是通用开关，DEEPSEEK_* 为老配置兜底 ----
+        key_envs = {p.key_env: _env(p.key_env) for p in llm_providers.PROVIDERS}
+        provider_id = (_env("LLM_PROVIDER") or "").strip().lower()
+        if not provider_id:
+            provider_id = llm_providers.detect(key_envs) or (
+                "deepseek" if _env("DEEPSEEK_API_KEY") else "deepseek")
+        prov = llm_providers.get(provider_id)
+        provider_id = prov.id
+        base_url = (_env("LLM_BASE_URL") or "").strip()
+        model = (_env("LLM_MODEL") or "").strip()
+        api_key = (_env("LLM_API_KEY") or "").strip()
+        if provider_id == "deepseek":
+            # 老安装只写了 DEEPSEEK_*，继续认
+            base_url = base_url or (_env("DEEPSEEK_BASE_URL") or "").strip()
+            model = model or (_env("DEEPSEEK_MODEL") or "").strip()
+            api_key = api_key or (_env("DEEPSEEK_API_KEY") or "").strip()
+        api_key = api_key or (key_envs.get(prov.key_env) or "").strip()
+        # 每个厂商单独存的 Key 槽位（切回来时不用重填）
+        api_key = api_key or (_env(f"LLM_KEY_{prov.id.upper()}") or "").strip()
+        base_url = base_url or prov.base_url
+        model = model or (prov.models[0] if prov.models and prov.models[0] else "")
+        mode = (_env("LLM_MODE") or "").strip() or (_env("DEEPSEEK_MODE", "auto") if provider_id == "deepseek" else "auto")
         ds = DeepSeekConfig(
-            api_key=_env("DEEPSEEK_API_KEY"),
-            base_url=_env("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-            mode=_env("DEEPSEEK_MODE", "auto"),
-            model=_env("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+            provider=provider_id,
+            protocol=prov.protocol,
+            api_key=api_key,
+            base_url=base_url,
+            mode=mode,
+            model=model,
             temperature=_env_float("DEEPSEEK_TEMPERATURE", 1.15),
             max_tokens=_env_int("DEEPSEEK_MAX_TOKENS", 8192),
             timeout=_env_int("DEEPSEEK_TIMEOUT", 240),
@@ -437,7 +481,8 @@ class Settings:
             return "OK " if ok else "-- "
 
         rows = [
-            f"{mark(self.deepseek.enabled)}DeepSeek   {self.deepseek.model} @ {self.deepseek.base_url}",
+            f"{mark(self.deepseek.enabled)}{self.deepseek.label:<10} {self.deepseek.model} "
+            f"@ {self.deepseek.base_url}",
             f"{mark(self.minimax.enabled)}Video      mode={self.minimax.mode} "
             f"{self.minimax.base_url} | {self.minimax.video_model} {self.minimax.resolution}"
             f"{' | workflow=' + self.minimax.video_workflow if self.minimax.video_workflow else ''}",

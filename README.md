@@ -7,6 +7,9 @@
 
 一个跑在本机的桌面级 AI 视频生产工具：**编剧 → 分镜 → 关键帧 → 镜头 → 配音 → 成片**，全流程可在图形界面里盯进度、改分镜、手动剪辑。
 
+编剧模型不限厂商：**Claude / ChatGPT / Gemini / Grok / GLM / Kimi / DeepSeek / 通义千问 / OpenRouter / 本地 Ollama** 都能接，换模型只改三行配置。
+界面自带 **9 种语言**（简中、繁中、英、法、德、日、韩、西、阿），阿拉伯语自动切 RTL。
+
 模型可全本地：剧本走 Ollama / vLLM，关键帧走 ComfyUI + LoRA，镜头走本地 H3 兼容网关或 ComfyUI 视频工作流——**没有 API Key 也能出片**。
 
 不是"调用一次 API 弹出一段视频"的玩具。它是一条带状态、可断点续跑、可单镜重拍、可人工二次剪辑的生产线。
@@ -19,7 +22,9 @@
 
 | 能力 | 说明 |
 |---|---|
-| 自主编剧 | 输入一句需求，DeepSeek 两段式产出「大纲 → 分镜表」，含人物设定、节拍、英文提示词、字幕台词 |
+| 自主编剧 | 输入一句需求，模型两段式产出「大纲 → 分镜表」，含人物设定、节拍、英文提示词、字幕台词 |
+| 多模型 | 11 个通道任选：DeepSeek / OpenAI / Claude / Gemini / Grok / GLM / Kimi / 千问 / OpenRouter / Ollama / 自建网关 |
+| 多语言 | 9 种界面语言，侧边栏一键切换，首次启动按系统语言自动匹配 |
 | 关键帧 | ComfyUI API 出图，**LoRA 自动注入**（工作流里没有 LoRA 节点也没关系，会自动插到 checkpoint 与下游之间） |
 | 镜头生成 | MiniMax H3 异步任务：文生视频 / 首帧图生视频，自动轮询、下载、重试、敏感词报错识别 |
 | 配音 | MiniMax speech T2A 优先，edge-tts 兜底，最后静音兜底（绝不让配音拖垮整片） |
@@ -27,6 +32,47 @@
 | 手动剪辑 | 时间线拖拽排序、片段入点 trim、时长、字幕、台词、转场、启用/停用、单镜重拍、本地素材替换/导入 |
 | 监控看板 | 任务进度、日志流、分镜状态、成片预览与下载（MP4 / SRT）|
 | 断点续跑 | 每一步落盘到 `project.json`，崩了重开继续，不重复烧 token / 不重复扣生成额度 |
+
+---
+
+## 一之二、多模型与多语言
+
+### 换编剧模型
+
+设置页「剧本大脑 · 多厂商」选厂商 → 选/填模型 → 填 Key → 点「测通道」，通过后保存即可。每家 Key 单独存槽位，切回来不用重填。
+
+也可以用环境变量（`%APPDATA%\VisionForge\.env`）：
+
+```bash
+LLM_PROVIDER=anthropic          # deepseek | openai | anthropic | gemini | xai | zhipu
+LLM_MODEL=claude-sonnet-4-5     # / moonshot | qwen | openrouter | ollama | custom
+LLM_API_KEY=sk-ant-xxxx
+LLM_MODE=auto
+```
+
+老安装的 `DEEPSEEK_API_KEY` / `DEEPSEEK_MODEL` 继续生效，不用改配置。
+
+| 厂商 | 协议 | 默认地址 | 备注 |
+|---|---|---|---|
+| DeepSeek | OpenAI 兼容 | `api.deepseek.com` | 中文剧本稳、便宜 |
+| OpenAI（ChatGPT） | OpenAI | `api.openai.com/v1` | 通用均衡 |
+| Anthropic（Claude） | Messages | `api.anthropic.com` | 长剧本、台词更好 |
+| Google（Gemini） | generateContent | `generativelanguage.googleapis.com` | 超长上下文 |
+| xAI（Grok） | OpenAI 兼容 | `api.x.ai/v1` | 网感脚本 |
+| 智谱（GLM） | OpenAI 兼容 | `open.bigmodel.cn` | 国内直连 |
+| 月之暗面（Kimi） | OpenAI 兼容 | `api.moonshot.cn/v1` | 中文长文本 |
+| 通义千问 | OpenAI 兼容 | `dashscope.aliyuncs.com` | 国内直连 |
+| OpenRouter | OpenAI 兼容 | `openrouter.ai/api/v1` | 一个 Key 调所有模型 |
+| Ollama | OpenAI 兼容 | `127.0.0.1:11434/v1` | 本地、免 Key |
+| 自定义 | OpenAI 兼容 | 自填 | vLLM / LM Studio / 自建网关 |
+
+云端厂商默认跟随系统代理（`HTTP(S)_PROXY`）。
+
+### 换界面语言
+
+侧边栏底部的地球图标里选，立即生效并记住；首次启动按系统语言匹配（`zh-TW/HK` 自动走繁體）。
+临时看某语言可加参数：`http://127.0.0.1:8765/?lang=ja`。
+阿拉伯语会自动 `dir="rtl"` 镜像布局。
 
 ---
 

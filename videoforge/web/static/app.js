@@ -173,25 +173,31 @@ async function boot() {
 
 function paintEngine() {
   const p = S.boot?.providers || {};
+  const llm = p.llm || p.deepseek || {};
   const dok = S.doctor;
   const dot = on => `<span class="dot ${on ? 'on' : 'off'}"></span>`;
   const comfyOk = dok?.comfyui?.ok;
   $('#engineCard').innerHTML = `
-    <div>${dot(p.deepseek?.enabled)}DeepSeek <b>${p.deepseek?.enabled ? esc(p.deepseek.model) : '未配置'}</b></div>
+    <div>${dot(llm.enabled)}${esc(llm.label || 'LLM')} <b>${llm.enabled ? esc(llm.model) : '未配置'}</b></div>
     <div>${dot(p.minimax?.enabled)}MiniMax H3 <b>${p.minimax?.enabled ? esc(p.minimax.resolution) : '未配置'}</b></div>
     <div>${dot(comfyOk === true)}ComfyUI <b>${comfyOk === true ? '在线' : (p.comfyui?.enabled ? '未检测' : '关闭')}</b></div>`;
   $('#workspacePath').textContent = S.boot?.workspace || '';
+  applyI18n($('#engineCard'));
 }
 
 function paintProviders() {
   const p = S.boot?.providers || {};
+  const llm = p.llm || p.deepseek || {};
   const chips = [
-    `<span class="chip ${p.deepseek?.enabled ? 'ok' : 'mute'}">${icon('wand')}${p.deepseek?.enabled ? 'DeepSeek 编剧' : '内置示例剧本'}</span>`,
-    `<span class="chip ${p.minimax?.enabled ? 'ok' : 'mute'}">${icon('video')}${p.minimax?.enabled ? 'MiniMax H3' : '本地占位片'}</span>`,
+    `<span class="chip ${llm.enabled ? 'ok' : 'mute'}">${icon('wand')}${llm.enabled
+      ? esc(llm.label || 'LLM') + ' ' + t('编剧')
+      : t('内置示例剧本')}</span>`,
+    `<span class="chip ${p.minimax?.enabled ? 'ok' : 'mute'}">${icon('video')}${p.minimax?.enabled ? 'MiniMax H3' : t('本地占位片')}</span>`,
     `<span class="chip ${p.comfyui?.enabled ? '' : 'mute'}">${icon('image')}ComfyUI${p.comfyui?.lora ? ' · LoRA' : ''}</span>`,
   ];
-  if (p.mock) chips.push(`<span class="chip warn">${icon('alert')}MOCK 模式</span>`);
+  if (p.mock) chips.push(`<span class="chip warn">${icon('alert')}MOCK</span>`);
   $('#providerChips').innerHTML = chips.join('');
+  applyI18n($('#providerChips'));
 }
 
 function paintProjectSelect() {
@@ -200,7 +206,7 @@ function paintProjectSelect() {
   if (!list.length) { sel.innerHTML = '<option>暂无项目</option>'; sel.disabled = true; return; }
   sel.disabled = false;
   sel.innerHTML = list.map(p =>
-    `<option value="${p.slug}" ${S.project?.slug === p.slug ? 'selected' : ''}>${esc(p.title)} · ${p.shots}镜 ${p.percent}%</option>`
+    `<option value="${p.slug}" ${S.project?.slug === p.slug ? 'selected' : ''}>${esc(p.title)} · ${t('{n} 镜', { n: p.shots })} ${p.percent}%</option>`
   ).join('');
 }
 
@@ -236,7 +242,7 @@ function render() {
   $$('.nav-item').forEach(n => n.classList.toggle('on', n.dataset.view === S.view));
   const view = $('#view');
   const p = S.project;
-  if (!p && S.view !== 'settings') { view.innerHTML = emptyWorkspace(); return; }
+  if (!p && S.view !== 'settings') { view.innerHTML = emptyWorkspace(); applyI18n(view); return; }
   view.innerHTML = (VIEWS[S.view] || renderDashboard)();
   if (S.view === 'timeline') bindTimeline();
   if (S.view === 'export') bindExport();
@@ -244,6 +250,7 @@ function render() {
     bindSettings();
     if (!S.doctor) loadDoctor();
   }
+  applyI18n(view);
 }
 
 async function loadDoctor() {
@@ -281,11 +288,11 @@ function renderDashboard() {
   const hasOut = !!p.output_url;
   const cover = p.cover_url || '';
   const steps = [
-    { icon: 'book', name: '剧本与分镜', desc: `${p.shots.length} 条镜头 · 目标 ${p.script.target_duration}s`, done: p.shots.length > 0, act: 'script' },
+    { icon: 'book', name: '剧本与分镜', desc: t('{n} 条镜头 · 目标 {sec}s', { n: p.shots.length, sec: p.script.target_duration }), done: p.shots.length > 0, act: 'script' },
     { icon: 'image', name: '关键帧渲染', desc: `ComfyUI + LoRA · ${kf}/${total}`, done: kf >= total, act: 'keyframes' },
     { icon: 'video', name: '镜头生成', desc: `MiniMax H3 · ${pr.rendered}/${total}`, done: pr.rendered >= total, act: 'clips' },
     { icon: 'mic', name: '配音合成', desc: `speech T2A · ${voice}/${total}`, done: voice >= total, act: 'voice' },
-    { icon: 'film', name: '剪辑出片', desc: hasOut ? `成片 ${fmtDur(p.meta.final_duration || pr.duration)}` : '字幕 / BGM / 混音', done: hasOut, act: 'assemble' },
+    { icon: 'film', name: '剪辑出片', desc: hasOut ? t('成片 {dur}', { dur: fmtDur(p.meta.final_duration || pr.duration) }) : '字幕 / BGM / 混音', done: hasOut, act: 'assemble' },
   ];
   const recents = (S.boot?.projects || []).slice(0, 6);
 
@@ -300,9 +307,9 @@ function renderDashboard() {
       <h1>${esc(p.title)}</h1>
       <div class="logline">${esc(p.script.logline || p.brief || '')}</div>
       <div class="meta">
-        <span class="chip">${icon('layers')}${p.shots.length} 镜</span>
-        <span class="chip">${icon('check')}已出片 ${pr.rendered}</span>
-        <span class="chip">${icon('mic')}已配音 ${voice}</span>
+        <span class="chip">${icon('layers')}${t('{n} 镜', { n: p.shots.length })}</span>
+        <span class="chip">${icon('check')}${t('已出片 {n}', { n: pr.rendered })}</span>
+        <span class="chip">${icon('mic')}${t('已配音 {n}', { n: voice })}</span>
         ${hasOut ? `<span class="chip ok">${icon('film')}成片就绪</span>` : `<span class="chip warn">${icon('alert')}尚未合成</span>`}
       </div>
       <div class="row">
@@ -346,7 +353,8 @@ function renderDashboard() {
         ${recents.map(r => `
           <div class="proj" data-act="open-project" data-slug="${r.slug}">
             <div class="thumb">${r.cover_url ? `<img src="${r.cover_url}">` : ''}</div>
-            <div><b>${esc(r.title)}</b><span>${r.shots} 镜 · ${r.duration}s · ${r.updated_at.slice(5, 16).replace('T', ' ')}</span></div>
+            <div><b>${esc(r.title)}</b><span>${t('{n} 镜 · {sec}s · {time}', {
+              n: r.shots, sec: r.duration, time: r.updated_at.slice(5, 16).replace('T', ' ')})}</span></div>
             <div class="pct">${r.percent}%</div>
           </div>`).join('') || `<div class="hint">暂无其他项目</div>`}
       </div>
@@ -379,7 +387,7 @@ function renderScript() {
     </div>
     <div>
       <div class="panel" style="margin-bottom:14px">
-        <div class="panel-head">${icon('list')}<h3>节拍</h3><span class="sub">${(sc.beats || []).length} 段</span></div>
+        <div class="panel-head">${icon('list')}<h3>节拍</h3><span class="sub">${t('{n} 段', { n: (sc.beats || []).length })}</span></div>
         ${(sc.beats || []).map(b => `
           <div class="beat">
             <span class="t">${esc(b.act || '段')}</span>
@@ -387,7 +395,7 @@ function renderScript() {
           </div>`).join('') || '<div class="hint">没有节拍数据</div>'}
       </div>
       <div class="panel">
-        <div class="panel-head">${icon('eye')}<h3>人物</h3><span class="sub">${(sc.characters || []).length} 位</span></div>
+        <div class="panel-head">${icon('eye')}<h3>人物</h3><span class="sub">${t('{n} 位', { n: (sc.characters || []).length })}</span></div>
         ${(sc.characters || []).map(c => `
           <div class="char">
             <div class="av">${esc((c.name || '?').slice(0, 1))}</div>
@@ -395,7 +403,7 @@ function renderScript() {
               ${c.look_en ? `<div class="hint mono" style="margin-top:4px">${esc(c.look_en)}</div>` : ''}</div>
           </div>`).join('') || '<div class="hint">无角色（纯空镜片）</div>'}
         <div class="divider"></div>
-        <div class="hint">配乐气质：${esc(sc.music_mood || '未指定')}<br>旁白音色：${esc(sc.narrator || '默认')}</div>
+        <div class="hint">${t('配乐气质：{v}', { v: sc.music_mood || t('未指定') })}<br>${t('旁白音色：{v}', { v: sc.narrator || t('默认') })}</div>
       </div>
     </div>
   </div>`;
@@ -414,7 +422,8 @@ function renderStoryboard() {
     <button class="btn sm" data-act="do" data-action="voice">${icon('mic')}生成配音</button>
     <button class="btn sm" data-act="do" data-action="render">${icon('sparkle')}全量渲染</button>
     <div class="spacer"></div>
-    <span class="hint">共 ${p.shots.length} 条 · ${p.progress.rendered} 已出片 · 失败 ${p.progress.failed}</span>
+    <span class="hint">${t('共 {total} 条 · {rendered} 已出片 · 失败 {failed}', {
+      total: p.shots.length, rendered: p.progress.rendered, failed: p.progress.failed })}</span>
     <button class="btn sm ghost" data-act="goto" data-view="timeline">${icon('scissors')}手动剪辑</button>
   </div>
   <div class="shot-grid">
@@ -422,7 +431,7 @@ function renderStoryboard() {
       <div class="shot" data-shot="${s.id}">
         <div class="media">
           ${s.keyframe_url ? `<img src="${s.keyframe_url}" loading="lazy">` : `<div class="empty">${icon('image')}</div>`}
-          <span class="badge-id">${s.id}${s.enabled === false ? ' · 停用' : ''}</span>
+          <span class="badge-id">${s.id}${s.enabled === false ? ' · ' + t('停用') : ''}</span>
           <span class="badge-dur">${s.duration}s</span>
         </div>
         <div class="body">
@@ -463,7 +472,7 @@ function renderTimeline() {
   <div class="tl-wrap">
     <div class="panel tight">
       <div class="panel-head">${icon('timeline')}<h3>时间线</h3>
-        <span class="sub">拖动排序 · 点选编辑 · 总时长 ${total}s</span>
+        <span class="sub">${t('拖动排序 · 点选编辑 · 总时长 {sec}s', { sec: total })}</span>
         <div class="spacer"></div>
         <button class="btn sm ghost" data-act="import-clip">${icon('upload')}导入素材</button>
       </div>
@@ -631,7 +640,7 @@ function bindTimeline() {
       await api(`/api/projects/${S.project.slug}/reorder`, { method: 'POST', body: { order: ids } });
       await openProject(S.project.slug, false);
       render();
-      toast('顺序已更新');
+      toast(t('顺序已更新'));
     } catch (err) { toast(err.message, 'err'); }
   });
   // 点选
@@ -696,7 +705,8 @@ function renderExport() {
       <div class="panel" style="margin-bottom:14px">
         <div class="panel-head">${icon('list')}<h3>交付信息</h3></div>
         <div class="insp-row"><label>项目</label><span>${esc(p.title)}</span></div>
-        <div class="insp-row"><label>镜头</label><span>${p.shots.length} 条（含 ${p.shots.filter(s => s.enabled === false).length} 条停用）</span></div>
+        <div class="insp-row"><label>镜头</label><span>${t('{n} 条（含 {m} 条停用）', {
+          n: p.shots.length, m: p.shots.filter(s => s.enabled === false).length })}</span></div>
         <div class="insp-row"><label>素材时长</label><span>${p.progress.duration}s</span></div>
         <div class="insp-row"><label>成片时长</label><span>${dur ? fmtDur(dur) : '—'}</span></div>
         <div class="insp-row"><label>分辨率</label><span>${esc(p.resolution)} @ ${p.fps}fps</span></div>
@@ -706,7 +716,7 @@ function renderExport() {
         <div class="field"><label>BGM 音频（可选）</label>
           <label class="btn sm ghost" style="width:100%">${icon('upload')}上传 BGM
             <input type="file" accept="audio/*" id="bgmFile" hidden></label>
-          <div class="hint" style="margin-top:6px">${p.bgm ? esc(p.bgm.split(/[\\/]/).pop()) : '支持 mp3 / wav / m4a'}</div>
+          <div class="hint" style="margin-top:6px">${p.bgm ? esc(p.bgm.split(/[\\/]/).pop()) : t('支持 mp3 / wav / m4a')}</div>
         </div>
       </div>
       <div class="panel" style="margin-bottom:14px">
@@ -717,12 +727,12 @@ function renderExport() {
         </div>
         <div class="insp-row"><label>已发生</label><span>¥${Number(costs.total || 0).toFixed(2)}${budget ? ` / 上限 ¥${Number(budget).toFixed(2)}` : ''}</span></div>
         <div class="insp-row"><label>调用次数</label><span>${(costs.entries || []).length}</span></div>
-        <div class="hint">${(costs.entries || []).slice(-4).map(e => `${esc(e.ts || '')} · ${esc(e.provider || '')} · ¥${Number(e.est || 0).toFixed(2)}`).join('<br>') || '还没有付费调用；本地/mock 通道记 0 元'}</div>
+        <div class="hint">${(costs.entries || []).slice(-4).map(e => `${esc(e.ts || '')} · ${esc(e.provider || '')} · ¥${Number(e.est || 0).toFixed(2)}`).join('<br>') || t('还没有付费调用；本地/mock 通道记 0 元')}</div>
       </div>
       <div class="panel">
         <div class="panel-head">${icon('terminal')}<h3>生成参数</h3></div>
         <div class="hint">
-          剧本：${esc(S.boot?.providers?.deepseek?.model || '-')}<br>
+          剧本：${esc(S.boot?.providers?.llm?.label || S.boot?.providers?.deepseek?.label || '-')} · ${esc(S.boot?.providers?.llm?.model || S.boot?.providers?.deepseek?.model || '-')}<br>
           镜头：${esc(S.boot?.providers?.minimax?.model || '-')} · ${esc(S.boot?.providers?.minimax?.resolution || '-')}<br>
           关键帧：ComfyUI ${esc(S.boot?.providers?.comfyui?.workflow || '-')}<br>
           LoRA：${esc(S.boot?.providers?.comfyui?.lora || '工作流默认')}
@@ -739,7 +749,7 @@ function bindExport() {
     try {
       await fetch(`/api/projects/${S.project.slug}/bgm?filename=${encodeURIComponent(f.files[0].name)}`,
         { method: 'POST', body: f.files[0], headers: authHeaders() });
-      toast('BGM 已上传');
+      toast(t('BGM 已上传'));
       await openProject(S.project.slug);
     } catch (e) { toast(e.message, 'err'); }
   });
@@ -757,7 +767,7 @@ function renderSettings() {
   const ff = sys.ffmpeg || {};
   const hwChips = [
     ['系统', `${sys.os?.system || '-'} ${sys.os?.release || ''}`],
-    ['CPU', `${sys.cpu?.cores || '-'} 核`],
+    ['CPU', `${sys.cpu?.cores || '-'} ${t('核')}`],
     ['内存', sys.ram_gb ? `${sys.ram_gb}G` : '-'],
     ['显卡', sys.gpu?.name ? `${sys.gpu.name} ${sys.gpu.vram_gb}G` : '无独显/未检测'],
     ['编码器', ff.usable?.join(' / ') || st.render.encoder || '-'],
@@ -769,29 +779,50 @@ function renderSettings() {
     `<option value="${esc(f)}" ${st.minimax.video_workflow === f ? 'selected' : ''}>${esc(f)}</option>`).join('');
   const modes = [['auto', '自动（有 Key 走云，没有走本地）'], ['cloud', '云端 API'], ['local', '本地 / 兼容网关'], ['comfyui', '本地 ComfyUI 工作流'], ['mock', '占位片（不出真视频）']];
 
+  const llm = st.llm || st.deepseek || {};
+  const provs = llm.providers || [];
+  const curProv = provs.find(p => p.id === llm.provider) || {};
+  const provOpts = provs.map(p =>
+    `<option value="${p.id}" ${llm.provider === p.id ? 'selected' : ''}>${p.label}</option>`).join('');
+  const modelList = (curProv.models || llm.models || []).map(m =>
+    `<option value="${esc(m)}"></option>`).join('');
+
   return `
   <div class="set-grid">
     <div class="panel">
       <div class="panel-head">${icon('key')}<h3>模型与接口</h3><span class="sub">密钥只写本机用户目录，不上传</span></div>
 
       <div class="prov">
-        <div class="ico">${icon('wand')}</div>
-        <div style="flex:1"><b>剧本大脑 · OpenAI 兼容</b>
-          <p>DeepSeek 云 / Ollama / vLLM / LM Studio 都行</p></div>
-        <div class="st"><span class="chip ${st.deepseek.api_key_set || st.deepseek.local ? 'ok' : 'warn'}">${st.deepseek.api_key_set ? '云端就绪' : st.deepseek.local ? '本地' : '未配置'}</span></div>
+        <div class="ico">${icon('robot')}</div>
+        <div style="flex:1"><b>剧本大脑 · 多厂商</b>
+          <p>Claude / ChatGPT / Gemini / Grok / GLM / Kimi / DeepSeek / 本地 Ollama</p></div>
+        <div class="st"><span class="chip ${llm.enabled ? 'ok' : 'warn'}">${llm.enabled ? '已就绪' : '未配置'}</span></div>
+      </div>
+      <div class="field"><label>厂商</label>
+        <select class="select" id="llmProvider">${provOpts}</select>
+        <div class="hint" style="margin-top:5px">${esc(t(curProv.note || ''))} · ${t('协议')} <span class="mono">${esc(llm.protocol || '')}</span>
+          ${curProv.docs ? ` · <a href="${esc(curProv.docs)}" target="_blank" rel="noreferrer" style="color:var(--accent-2)">${t('拿 Key')}</a>` : ''}</div>
+      </div>
+      <div class="col-2">
+        <div class="field"><label>Base URL</label><input class="input" id="llmBase" value="${esc(llm.base_url || '')}"></div>
+        <div class="field"><label>模型</label>
+          <input class="input" id="llmModel" list="llmModels" value="${esc(llm.model || '')}">
+          <datalist id="llmModels">${modelList}</datalist>
+        </div>
+      </div>
+      <div class="field"><label>API Key（${esc(curProv.key_env || 'LLM_API_KEY')}）</label>
+        <input class="input" id="llmKey" type="password" placeholder="留空=不修改${llm.api_key_set ? '（已存 ' + esc(llm.key_hint || '') + '）' : ''}"></div>
+      <div class="row" style="margin-bottom:12px">
+        <button class="btn sm ghost" data-act="llm-check">${icon('refresh')}测通道</button>
+        <span id="llmCheck" class="hint"></span>
       </div>
       <div class="field"><label>来源</label>
-        <select class="select" id="dsMode">
-          <option value="auto" ${st.deepseek.mode === 'auto' ? 'selected' : ''}>自动</option>
-          <option value="cloud" ${st.deepseek.mode === 'cloud' ? 'selected' : ''}>云端 API</option>
-          <option value="local" ${st.deepseek.mode === 'local' ? 'selected' : ''}>本地 OpenAI 兼容</option>
+        <select class="select" id="llmMode">
+          <option value="auto" ${llm.mode === 'auto' ? 'selected' : ''}>自动</option>
+          <option value="cloud" ${llm.mode === 'cloud' ? 'selected' : ''}>云端 API</option>
+          <option value="local" ${llm.mode === 'local' ? 'selected' : ''}>本地 OpenAI 兼容</option>
         </select></div>
-      <div class="col-2">
-        <div class="field"><label>Base URL</label><input class="input" id="dsBase" value="${esc(st.deepseek.base_url)}" placeholder="http://127.0.0.1:11434/v1"></div>
-        <div class="field"><label>模型</label><input class="input" id="dsModel" value="${esc(st.deepseek.model)}"></div>
-      </div>
-      <div class="field"><label>API Key（本地可不填）</label><input class="input" id="dsKey" type="password" placeholder="留空=不修改"></div>
-      <div class="hint">本地示例：Ollama 填 <span class="mono">http://127.0.0.1:11434/v1</span>，模型 <span class="mono">qwen2.5:14b</span></div>
+      <div class="hint">${t('本地示例：Ollama 选')} <span class="mono">Ollama · Local</span>${t('，模型填')} <span class="mono">qwen3:14b</span>${t('；vLLM / LM Studio 选「自定义」。')}</div>
 
       <div class="sec-title">视频生成</div>
       <div class="prov">
@@ -822,14 +853,14 @@ function renderSettings() {
           <div class="field"><label>提交路径</label><input class="input mono" id="mmSubmit" value="${esc(st.minimax.submit_path)}"></div>
           <div class="field"><label>查询路径</label><input class="input mono" id="mmQuery" value="${esc(st.minimax.query_path)}"></div>
         </div>
-        <div class="hint">本地服务只要实现这两个接口即可：POST 提交返回 task_id，GET 查询返回 status + content.url。免 Key 也能跑。</div>
+        <div class="hint">${t('本地服务只要实现这两个接口即可：POST 提交返回 task_id，GET 查询返回 status + content.url。免 Key 也能跑。')}</div>
       </details>
       <div class="field"><label>ComfyUI 视频工作流（本地出片第二条路）</label>
         <select class="select" id="mmWorkflow">
           <option value="">（不使用）</option>
           ${wfOptions}
         </select>
-        <div class="hint" style="margin-top:5px">工作流放 workflows/ 目录；节点用标题标记 POSITIVE / NEGATIVE / LOAD_IMAGE，含 width/height 与 length 的节点会自动改分辨率与帧数。</div>
+        <div class="hint" style="margin-top:5px">${t('工作流放 workflows/ 目录；节点用标题标记 POSITIVE / NEGATIVE / LOAD_IMAGE，含 width/height 与 length 的节点会自动改分辨率与帧数。')}</div>
       </div>
       <div id="videoCheck" class="hint"></div>
 
@@ -850,7 +881,7 @@ function renderSettings() {
       ${d?.comfyui?.ok ? `<div class="hint">可用 LoRA（点选填入）：<br>${(d.comfyui.loras || []).slice(0, 18).map(l =>
         `<span class="tag" data-act="pick-lora" data-lora="${esc(l)}" style="cursor:pointer">${esc(l)}</span>`).join('') || '（目录为空）'}
         <br>Checkpoint：${(d.comfyui.checkpoints || []).slice(0, 6).map(esc).join(' / ') || '（未读到）'}</div>`
-      : `<div class="hint">${d?.comfyui?.error ? '检测失败：' + esc(d.comfyui.error) : '点「检测」读取 ComfyUI 的模型与 LoRA 列表。'}</div>`}
+      : `<div class="hint">${d?.comfyui?.error ? t('检测失败：') + esc(d.comfyui.error) : t('点「检测」读取 ComfyUI 的模型与 LoRA 列表。')}</div>`}
     </div>
 
     <div>
@@ -858,7 +889,7 @@ function renderSettings() {
         <div class="panel-head">${icon('cpu')}<h3>系统自检</h3>
           <span class="sub">${d.first_run ? '尚未自动配置' : '已自动配置'}</span>
           <div class="spacer"></div>
-          <button class="btn sm primary" data-act="autoconfig">${icon('sparkle')}重新检测并应用</button>
+          <button class="btn sm primary" data-act="autoconfig">${icon('sparkle')}${t('重新检测并应用')}</button>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">
           ${hwChips.map(([k, v]) => `<div class="hint" style="display:flex;gap:7px;align-items:baseline;border-bottom:1px dashed var(--line);padding-bottom:5px;min-width:0">
@@ -902,7 +933,7 @@ function renderSettings() {
           API Key 保存到：<span class="mono">${esc(st.security?.env_file || '')}</span><br>
           本地 API 防护：<span class="mono">${st.security?.api_guard ? 'token + Host 校验已开启' : '调试模式已关闭防护'}</span><br>
           ffmpeg：<span class="mono">${esc(ff.path || '检测中…')}</span><br>
-          版本：v${esc(S.boot?.version || '')}
+          ${t('版本：')}v${esc(S.boot?.version || '')}
         </div>
         ${(d.recent_warnings || []).length ? `<details style="margin-top:8px"><summary class="hint" style="cursor:pointer">最近 ${d.recent_warnings.length} 条警告</summary><div class="log-box" style="margin-top:8px;max-height:150px">${d.recent_warnings.map(esc).join('\n')}</div></details>` : ''}
       </div>
@@ -915,7 +946,23 @@ function renderSettings() {
   </div>`;
 }
 
-function bindSettings() { /* 值在保存时统一读取，无需逐个绑定 */ }
+function bindSettings() {
+  const sel = $('#llmProvider');
+  if (!sel || sel.dataset.bound) return;
+  sel.dataset.bound = '1';
+  // 换厂商：Base URL / 模型 / 模型候选 跟着切，Key 不用重填（各家单独存）
+  sel.addEventListener('change', () => {
+    const llm = S.settings?.llm || {};
+    const prov = (llm.providers || []).find(p => p.id === sel.value);
+    if (!prov) return;
+    if ($('#llmBase')) $('#llmBase').value = prov.base_url || '';
+    if ($('#llmModel')) $('#llmModel').value = (prov.models || [])[0] || '';
+    const dl = $('#llmModels');
+    if (dl) dl.innerHTML = (prov.models || []).map(m => `<option value="${esc(m)}"></option>`).join('');
+    const key = $('#llmKey');
+    if (key) key.placeholder = `留空=不修改（${prov.key_env || 'LLM_API_KEY'}）`;
+  });
+}
 
 /* ------------------------------------------------------------------ */
 /* 弹窗                                                                */
@@ -924,6 +971,7 @@ function openModal(html, cls = '') {
   const box = $('#modalBox');
   box.className = 'modal ' + cls;
   box.innerHTML = html;
+  applyI18n(box);
   $('#modal').classList.add('on');
   const first = box.querySelector('input, textarea, select');
   if (first) setTimeout(() => first.focus(), 60);
@@ -931,7 +979,8 @@ function openModal(html, cls = '') {
 function closeModal() { $('#modal').classList.remove('on'); }
 
 function newProjectModal() {
-  const mock = S.boot?.providers?.mock || !S.boot?.providers?.deepseek?.enabled;
+  const llm = S.boot?.providers?.llm || S.boot?.providers?.deepseek || {};
+  const mock = S.boot?.providers?.mock || !llm.enabled;
   openModal(`
     <div class="modal-head">${icon('sparkle')}<h2>新建 AI 影片</h2>
       <button class="icon-btn close" data-act="close-modal">${icon('close')}</button></div>
@@ -969,8 +1018,9 @@ function newProjectModal() {
     <label class="chk" style="margin-top:4px"><input type="checkbox" id="npMock" ${mock ? 'checked' : ''}>
       MOCK 模式：不调用付费接口，用占位素材跑通全流程</label>
     <div class="hint" style="margin-top:8px">
-      ${S.boot?.providers?.deepseek?.enabled ? 'DeepSeek 将撰写剧本与分镜。' : '未配置 DeepSeek，会使用内置示例分镜。'}
-      ${S.boot?.providers?.minimax?.enabled ? '' : ' 未配置 MiniMax，镜头将用本地占位片。'}
+      ${llm.enabled ? t('{name} 将撰写剧本与分镜。', { name: llm.label || llm.model })
+        : t('未配置剧本模型，会使用内置示例分镜。')}
+      ${S.boot?.providers?.minimax?.enabled ? '' : ' ' + t('未配置 MiniMax，镜头将用本地占位片。')}
     </div>
     <div class="modal-foot">
       <button class="btn ghost" data-act="close-modal">取消</button>
@@ -1017,9 +1067,9 @@ function showJob(jobId, title) {
   S.jobLogs = [];
   S.jobSince = 0;
   $('#jobdock').classList.remove('hide');
-  $('#jobTitle').textContent = title || '任务执行中';
+  $('#jobTitle').textContent = title || t('任务执行中');
   $('#jobBar').style.width = '4%';
-  $('#jobLogs').textContent = '正在启动…';
+  $('#jobLogs').textContent = t('正在启动…');
   pollJob(jobId);
 }
 
@@ -1029,7 +1079,7 @@ async function pollJob(jobId) {
     const j = await api(`/api/jobs/${jobId}?since=${S.jobSince}`);
     S.jobSince = j.log_total;
     S.job = j;
-    const label = JOB_LABEL[j.kind] || j.kind;
+    const label = t(JOB_LABEL[j.kind] || j.kind);
     $('#jobTitle').textContent = `${label}${j.status === 'running' ? '…' : ''}`;
     $('#jobElapsed').textContent = fmtDur(j.elapsed);
     let pct = j.progress?.percent ?? 0;
@@ -1048,7 +1098,7 @@ async function pollJob(jobId) {
       $('#jobBar').style.background = j.status === 'failed'
         ? 'linear-gradient(90deg,#ff6b81,#ff9aa8)' : 'linear-gradient(90deg,#3ddc97,#6ee7ff)';
       if (j.status === 'done') {
-        toast(`${label}完成`);
+        toast(t('{label}完成', { label }));
         if (j.kind === 'plan' && j.result?.slug) {
           await boot();
           await openProject(j.result.slug);
@@ -1059,7 +1109,7 @@ async function pollJob(jobId) {
         }
         setTimeout(() => { if (S.job?.status === 'done') $('#jobdock').classList.add('hide'); }, 2600);
       } else {
-        toast(j.error || `${label}失败`, 'err', 5200);
+        toast(j.error || t('{label}失败', { label }), 'err', 5200);
       }
       return;
     }
@@ -1082,7 +1132,7 @@ async function submitJob(url, body, title) {
 /* 动作分发                                                            */
 /* ------------------------------------------------------------------ */
 async function doAction(action, force = false) {
-  if (!S.project) return toast('先建个项目', 'warn');
+  if (!S.project) return toast(t('先建个项目'), 'warn');
   const label = JOB_LABEL[action] || action;
   await submitJob(`/api/projects/${S.project.slug}/actions`, { action, force }, label);
 }
@@ -1096,7 +1146,7 @@ document.addEventListener('click', async e => {
   const act = el.dataset.act;
 
   if (act === 'goto') { S.view = el.dataset.view; render(); return; }
-  if (act === 'refresh') { await boot(); toast('已刷新'); return; }
+  if (act === 'refresh') { await boot(); toast(t('已刷新')); return; }
   if (act === 'new-project') { newProjectModal(); return; }
   if (act === 'close-modal') { closeModal(); return; }
   if (act === 'hide-job') { $('#jobdock').classList.add('hide'); return; }
@@ -1115,7 +1165,7 @@ document.addEventListener('click', async e => {
   }
   if (act === 'create-project') {
     const brief = $('#npBrief').value.trim();
-    if (brief.length < 4) return toast('需求至少写一句完整的话', 'warn');
+    if (brief.length < 4) return toast(t('需求至少写一句完整的话'), 'warn');
     const dur = Number($('#npDurRow .preset.on')?.dataset.v || 60);
     const aspect = $('#npAspectRow .preset.on')?.dataset.v || '16:9';
     const style = $('#npStyleRow .preset.on')?.dataset.v || '';
@@ -1132,16 +1182,16 @@ document.addEventListener('click', async e => {
 
   /* ---- 生产 ---- */
   if (act === 'export-costs') {
-    if (!S.project) return toast('先打开一个项目', 'warn');
+    if (!S.project) return toast(t('先打开一个项目'), 'warn');
     try {
       const r = await api(`/api/projects/${S.project.slug}/costs`);
       const blob = new Blob([r.summary || ''], { type: 'text/plain;charset=utf-8' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `${S.project.slug}-成本小结.txt`;
+      a.download = t('{slug}-成本小结.txt', { slug: S.project.slug });
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-      toast('成本小结已导出');
+      toast(t('成本小结已导出'));
     } catch (err) { toast(err.message, 'err'); }
     return;
   }
@@ -1189,13 +1239,13 @@ document.addEventListener('click', async e => {
       await openProject(S.project.slug, false);
       if (r.tail) S.selected = r.tail.id;
       render();
-      toast(`已切成 ${r.head.id} + ${r.tail.id}`, 'ok');
+      toast(t('已切成 {head} + {tail}', { head: r.head.id, tail: r.tail.id }), 'ok');
     } catch (err) { toast(err.message, 'err'); }
     return;
   }
   if (act === 'ai-edit') {
     const text = $('#aiCmd')?.value.trim();
-    if (!text) return toast('先写一句指令，例：全部调成黑白，第2镜1.2倍速', 'warn');
+    if (!text) return toast(t('先写一句指令，例：全部调成黑白，第2镜1.2倍速'), 'warn');
     el.disabled = true;
     el.innerHTML = `${icon('refresh', 'spin')}解析中`;
     try {
@@ -1203,7 +1253,7 @@ document.addEventListener('click', async e => {
         { method: 'POST', body: { text } });
       await openProject(S.project.slug, false);
       render();
-      toast(r.reply || (r.ok ? '已应用' : '没听懂'), r.ok ? 'ok' : 'warn', 4200);
+      toast(r.reply || (r.ok ? t('已应用') : t('没听懂')), r.ok ? 'ok' : 'warn', 4200);
     } catch (err) { toast(err.message, 'err'); }
     el.disabled = false;
     return;
@@ -1237,7 +1287,7 @@ document.addEventListener('click', async e => {
       await api(`/api/projects/${S.project.slug}/shots/${sid}`, { method: 'PATCH', body });
       await openProject(S.project.slug, false);
       render();
-      toast('镜头已保存，重新合成生效');
+      toast(t('镜头已保存，重新合成生效'));
     } catch (err) { toast(err.message, 'err'); }
     return;
   }
@@ -1252,16 +1302,16 @@ document.addEventListener('click', async e => {
   if (act === 'dup-shot') {
     try {
       await api(`/api/projects/${S.project.slug}/shots/${el.dataset.shot}/duplicate`, { method: 'POST' });
-      await openProject(S.project.slug, false); render(); toast('已复制镜头');
+      await openProject(S.project.slug, false); render(); toast(t('已复制镜头'));
     } catch (err) { toast(err.message, 'err'); }
     return;
   }
   if (act === 'del-shot') {
-    if (!confirm('删掉这条镜头？文件会留着，列表里不再出现。')) return;
+    if (!confirm(t('删掉这条镜头？文件会留着，列表里不再出现。'))) return;
     try {
       await api(`/api/projects/${S.project.slug}/shots/${el.dataset.shot}`, { method: 'DELETE' });
       S.selected = null;
-      await openProject(S.project.slug, false); render(); toast('已删除');
+      await openProject(S.project.slug, false); render(); toast(t('已删除'));
     } catch (err) { toast(err.message, 'err'); }
     return;
   }
@@ -1274,10 +1324,10 @@ document.addEventListener('click', async e => {
       const url = act === 'import-clip'
         ? `/api/projects/${S.project.slug}/shots/import?filename=${encodeURIComponent(f.name)}`
         : `/api/projects/${S.project.slug}/shots/${el.dataset.shot}/replace?filename=${encodeURIComponent(f.name)}`;
-      toast('正在上传素材…', 'warn', 2000);
+      toast(t('正在上传素材…'), 'warn', 2000);
       const res = await fetch(url, { method: 'POST', body: f, headers: authHeaders() });
-      if (!res.ok) return toast('上传失败', 'err');
-      await openProject(S.project.slug, false); render(); toast('素材已导入');
+      if (!res.ok) return toast(t('上传失败'), 'err');
+      await openProject(S.project.slug, false); render(); toast(t('素材已导入'));
     };
     input.click(); return;
   }
@@ -1294,7 +1344,7 @@ document.addEventListener('click', async e => {
         },
       }});
       await openProject(S.project.slug, false);
-      toast('剧本已保存');
+      toast(t('剧本已保存'));
     } catch (err) { toast(err.message, 'err'); }
     return;
   }
@@ -1309,8 +1359,34 @@ document.addEventListener('click', async e => {
       await boot();
       S.view = 'settings'; render();
       const enc = r.applied?.render?.encoder || 'libx264';
-      toast(`已按本机配置：${enc} · ${r.applied?.render?.width || 1920}x${r.applied?.render?.height || 1080}`, 'ok', 4200);
+      toast(t('已按本机配置：{enc} · {w}x{h}', { enc, w: r.applied?.render?.width || 1920, h: r.applied?.render?.height || 1080 }), 'ok', 4200);
     } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'llm-check') {
+    el.disabled = true;
+    el.innerHTML = `${icon('refresh', 'spin')}${t('检测中…')}`;
+    const box = $('#llmCheck');
+    if (box) box.textContent = '';
+    try {
+      const r = await api('/api/system/llm-check', { method: 'POST', body: {
+        provider: $('#llmProvider')?.value || '',
+        model: $('#llmModel')?.value || '',
+        base_url: $('#llmBase')?.value || '',
+        api_key: $('#llmKey')?.value || '',
+      }});
+      if (box) {
+        box.innerHTML = r.ok
+          ? `${esc(r.label)} · ${esc(r.model)} · ${r.latency_ms}ms · "${esc(r.sample || '')}"`
+          : `<span style="color:var(--danger)">${esc(r.error || '失败')}</span>`;
+      }
+      toast(r.ok ? t('通道正常') : t('通道不通'), r.ok ? 'ok' : 'err', 4200);
+    } catch (err) {
+      if (box) box.innerHTML = `<span style="color:var(--danger)">${esc(err.message)}</span>`;
+      toast(err.message, 'err');
+    }
+    el.disabled = false;
+    el.innerHTML = `${icon('refresh')}${t('测通道')}`;
     return;
   }
   if (act === 'video-check') {
@@ -1325,29 +1401,32 @@ document.addEventListener('click', async e => {
           (m ? `<br>网关 ${m.ok ? '在线' : '不可用'} ${esc(m.error || m.status || '')}` : '') +
           (cv ? `<br>工作流 ${cv.ok ? 'ComfyUI 在线' : 'ComfyUI 未连'} / ${cv.workflow_exists ? '文件存在' : '文件缺失'}` : '');
       }
-      toast('通道探测完成', 'ok');
+      toast(t('通道探测完成'), 'ok');
     } catch (err) { toast(err.message, 'err'); }
     el.disabled = false;
     return;
   }
   if (act === 'doctor') {
     el.disabled = true;
-    toast('正在探测 ComfyUI…', 'warn', 2000);
+    toast(t('正在探测 ComfyUI…'), 'warn', 2000);
     try {
       S.doctor = await api('/api/system/doctor');
       paintEngine();
       render();
-      toast(S.doctor.comfyui?.ok ? `ComfyUI 在线，${S.doctor.comfyui.loras.length} 个 LoRA` : 'ComfyUI 未连接',
+      toast(S.doctor.comfyui?.ok ? t('ComfyUI 在线，{n} 个 LoRA', { n: S.doctor.comfyui.loras.length }) : t('ComfyUI 未连接'),
         S.doctor.comfyui?.ok ? 'ok' : 'warn');
     } catch (err) { toast(err.message, 'err'); }
     el.disabled = false;
     return;
   }
-  if (act === 'pick-lora') { $('#cfLora').value = el.dataset.lora; toast('已填入 LoRA'); return; }
+  if (act === 'pick-lora') { $('#cfLora').value = el.dataset.lora; toast(t('已填入 LoRA')); return; }
   if (act === 'save-settings') {
     const body = {
-      deepseek: { api_key: $('#dsKey').value, model: $('#dsModel').value,
-                  base_url: $('#dsBase').value, mode: $('#dsMode').value },
+      llm: { provider: $('#llmProvider')?.value || 'deepseek',
+             api_key: $('#llmKey')?.value || '',
+             model: $('#llmModel')?.value || '',
+             base_url: $('#llmBase')?.value || '',
+             mode: $('#llmMode')?.value || 'auto' },
       minimax: { api_key: $('#mmKey').value, model: $('#mmModel').value,
                  resolution: $('#mmRes').value, voice_id: $('#mmVoice').value,
                  mode: $('#mmMode').value, base_url: $('#mmBase').value,
@@ -1367,7 +1446,7 @@ document.addEventListener('click', async e => {
       S.settings = (await api('/api/settings', { method: 'POST', body })).settings;
       await boot();
       S.view = 'settings'; render();
-      toast('设置已保存');
+      toast(t('设置已保存'));
     } catch (err) { toast(err.message, 'err'); }
     return;
   }
@@ -1390,11 +1469,15 @@ document.addEventListener('keydown', e => {
 /* 入口                                                                */
 /* ------------------------------------------------------------------ */
 (async function main() {
+  if (window.__i18nReady) { try { await window.__i18nReady; } catch (e) { /* 词库失败就用中文 */ } }
   initSky();
   try {
     await boot();
     S.settings = await api('/api/settings');
     S.workflows = (await api('/api/workflows')).files || [];
+    // 支持 #settings / #timeline 这类深链，方便截图与排错
+    const hash = (location.hash || '').replace('#', '');
+    if (VIEWS[hash]) S.view = hash;
     if (S.view === 'settings') render();
   } catch (e) {
     document.body.insertAdjacentHTML('beforeend',

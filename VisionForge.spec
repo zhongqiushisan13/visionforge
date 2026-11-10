@@ -25,6 +25,7 @@ binaries = []
 hiddenimports = [
     "clr",
     "pythonnet",
+    "videoforge.llm_providers",
     "anyio._backends._asyncio",
     "uvicorn.logging",
     "uvicorn.lifespan.on",

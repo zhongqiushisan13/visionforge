@@ -200,8 +200,16 @@ def _child_pid_file(pid: int) -> Path:
     return _run_dir() / f"child-{os.getpid()}-{pid}.json"
 
 
+def _child_registry_enabled() -> bool:
+    """受限环境（沙箱、杀软拦删除）可关掉子进程登记，避免清理阶段卡住。"""
+    return os.environ.get("VF_NO_CHILD_REGISTRY", "").strip().lower() not in (
+        "1", "true", "yes", "on")
+
+
 def _register_child(pid: int, cmd: Sequence[str]) -> Optional[Path]:
     """登记子进程，供下次启动时清理崩溃后留下的孤儿 ffmpeg。"""
+    if not _child_registry_enabled():
+        return None
     try:
         path = _child_pid_file(pid)
         path.write_text(json.dumps({"owner": os.getpid(), "pid": pid,
@@ -256,6 +264,9 @@ def reap_orphans() -> int:
     """
     killed = 0
     run_dir = _run_dir()
+    if not _child_registry_enabled():
+        # 关掉登记时也别去碰这些文件：受限环境下删除本身就会卡住
+        return 0
     for meta_path in run_dir.glob("child-*.json"):
         data = read_json(meta_path, default={}) or {}
         try:

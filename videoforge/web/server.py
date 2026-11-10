@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
+from .. import llm_providers
 from ..config import APP_ROOT, BUNDLE_ROOT, PROJECT_ROOT, Settings, env_file_path, tighten_file_permissions
 from ..edit_commands import apply_ops, interpret
 from ..editing import FILTER_PRESETS, TITLE_POSITIONS, TRANSITIONS, timeline
@@ -214,7 +215,12 @@ def create_app() -> FastAPI:
             "projects": projects,
             "active_jobs": active,
             "providers": {
-                "deepseek": {"enabled": s.deepseek.enabled, "model": s.deepseek.model},
+                "llm": {"enabled": s.deepseek.enabled, "provider": s.deepseek.provider,
+                        "label": s.deepseek.label, "model": s.deepseek.model,
+                        "protocol": s.deepseek.protocol},
+                # 兼容老前端：deepseek 字段现在代表「当前选中的剧本模型」
+                "deepseek": {"enabled": s.deepseek.enabled, "model": s.deepseek.model,
+                             "provider": s.deepseek.provider, "label": s.deepseek.label},
                 "minimax": {"enabled": s.minimax.enabled, "model": s.minimax.video_model,
                             "resolution": s.minimax.resolution},
                 "comfyui": {"enabled": bool(s.comfy.base_url), "url": s.comfy.base_url,
@@ -238,6 +244,9 @@ def create_app() -> FastAPI:
     def doctor() -> Dict[str, Any]:
         s = _settings()
         out: Dict[str, Any] = {"deepseek": s.deepseek.enabled, "minimax": s.minimax.enabled,
+                               "llm": {"provider": s.deepseek.provider, "label": s.deepseek.label,
+                                       "model": s.deepseek.model, "protocol": s.deepseek.protocol,
+                                       "enabled": s.deepseek.enabled},
                                "env_file": str(env_file_path()),
                                "recent_warnings": recent_warnings(10),
                                "api_guard": not security.unsafe_mode()}
@@ -270,6 +279,36 @@ def create_app() -> FastAPI:
         files = sorted(p.name for p in root.glob("*.json")) if root.exists() else []
         return {"files": files, "dir": str(root)}
 
+    @app.post("/api/system/llm-check")
+    def llm_check(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
+        """测一下剧本模型通道：可以用表单里还没保存的值先试。"""
+        from dataclasses import replace
+
+        s = _settings()
+        cfg = s.deepseek
+        if payload.get("provider"):
+            prov = llm_providers.BY_ID.get(str(payload["provider"]).strip().lower())
+            if prov is None:
+                raise HTTPException(400, f"未知的模型厂商：{payload['provider']}")
+            cfg = replace(cfg, provider=prov.id, protocol=prov.protocol,
+                          base_url=str(payload.get("base_url") or prov.base_url).strip(),
+                          model=str(payload.get("model") or (prov.models[0] if prov.models else "")).strip(),
+                          api_key=str(payload.get("api_key") or cfg.api_key).strip())
+        llm = DeepSeek(cfg)
+        info = {"provider": cfg.provider, "label": cfg.label, "protocol": cfg.protocol,
+                "model": cfg.model, "base_url": cfg.base_url, "local": cfg.is_local}
+        if not llm.available:
+            return {"ok": False, **info, "error": "没有可用凭据：填 API Key，或把模式设为本地"}
+        t0 = time.time()
+        try:
+            sample = llm.text([{"role": "user", "content": "只回答两个字：正常"}],
+                              max_tokens=24, temperature=0)
+            return {"ok": True, **info, "latency_ms": int((time.time() - t0) * 1000),
+                    "sample": sample.strip()[:120], "usage": llm.usage}
+        except Exception as exc:
+            return {"ok": False, **info, "latency_ms": int((time.time() - t0) * 1000),
+                    "error": str(exc)[:400]}
+
     @app.post("/api/system/video-check")
     def video_check() -> Dict[str, Any]:
         """探测视频通道：本地网关 / ComfyUI 视频工作流是否真的能用。"""
@@ -290,13 +329,28 @@ def create_app() -> FastAPI:
     @app.get("/api/settings")
     def get_settings() -> Dict[str, Any]:
         s = _settings()
+        llm = s.deepseek
+        prov = llm_providers.get(llm.provider)
+        stored_keys = {p.id: bool(os.environ.get(p.key_env)) for p in llm_providers.PROVIDERS}
         return {
-            "deepseek": {"model": s.deepseek.model, "base_url": s.deepseek.base_url,
-                         "mode": s.deepseek.mode, "local": s.deepseek.is_local,
-                         "api_key_set": bool(s.deepseek.api_key),
-                         "key_hint": (s.deepseek.api_key[:6] + "…" + s.deepseek.api_key[-4:])
-                         if len(s.deepseek.api_key) > 12 else "",
-                         "temperature": s.deepseek.temperature},
+            "llm": {"provider": llm.provider, "label": llm.label, "protocol": llm.protocol,
+                    "model": llm.model, "base_url": llm.base_url, "mode": llm.mode,
+                    "local": llm.is_local, "enabled": llm.enabled,
+                    "api_key_set": bool(llm.api_key),
+                    "key_hint": (llm.api_key[:6] + "…" + llm.api_key[-4:])
+                    if len(llm.api_key) > 12 else "",
+                    "models": prov.models_or([llm.model]),
+                    "key_env": prov.key_env, "keyless": prov.keyless,
+                    "stored_keys": stored_keys,
+                    "providers": llm_providers.describe_all(),
+                    "temperature": llm.temperature},
+            # 兼容老前端字段
+            "deepseek": {"provider": llm.provider, "model": llm.model,
+                         "base_url": llm.base_url, "mode": llm.mode,
+                         "local": llm.is_local, "api_key_set": bool(llm.api_key),
+                         "key_hint": (llm.api_key[:6] + "…" + llm.api_key[-4:])
+                         if len(llm.api_key) > 12 else "",
+                         "temperature": llm.temperature},
             "minimax": {"model": s.minimax.video_model, "resolution": s.minimax.resolution,
                         "ratio": s.minimax.ratio, "tts_model": s.minimax.tts_model,
                         "voice_id": s.minimax.voice_id,
@@ -325,12 +379,56 @@ def create_app() -> FastAPI:
     @app.post("/api/settings")
     def save_settings(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         env_updates: Dict[str, str] = {}
+        llm = payload.get("llm") or {}
         ds = payload.get("deepseek") or {}
         mm = payload.get("minimax") or {}
-        if ds.get("api_key"):
-            env_updates["DEEPSEEK_API_KEY"] = str(ds["api_key"]).strip()
-        if ds.get("model"):
-            env_updates["DEEPSEEK_MODEL"] = str(ds["model"]).strip()
+
+        # ---- 剧本模型：切换厂商时同步切 Key / Base URL / 默认模型 ----
+        if llm or ds:
+            current = _settings().deepseek
+            want = str(llm.get("provider") or ds.get("provider") or current.provider).strip().lower()
+            prov = llm_providers.BY_ID.get(want)
+            if prov is None:
+                raise HTTPException(400, f"未知的模型厂商：{want}")
+            changed = prov.id != current.provider
+            slot = f"LLM_KEY_{prov.id.upper()}"
+            env_updates["LLM_PROVIDER"] = prov.id
+
+            new_key = str(llm.get("api_key") or ds.get("api_key") or "").strip()
+            if new_key:
+                env_updates["LLM_API_KEY"] = new_key
+                env_updates[slot] = new_key
+                if prov.id == "deepseek":
+                    env_updates["DEEPSEEK_API_KEY"] = new_key
+            elif changed:
+                # 切厂商但没填新 Key：优先复用该厂商上次存的，避免拿旧厂商 Key 去请求
+                stored = (os.environ.get(slot) or os.environ.get(prov.key_env) or "").strip()
+                env_updates["LLM_API_KEY"] = stored
+                if prov.id == "deepseek":
+                    env_updates["DEEPSEEK_API_KEY"] = stored
+
+            model = str(llm.get("model") or ds.get("model") or "").strip()
+            if model:
+                env_updates["LLM_MODEL"] = model
+                if prov.id == "deepseek":
+                    env_updates["DEEPSEEK_MODEL"] = model
+            elif changed:
+                env_updates["LLM_MODEL"] = prov.models[0] if prov.models else ""
+
+            base_url = str(llm.get("base_url") or ds.get("base_url") or "").strip()
+            if base_url:
+                env_updates["LLM_BASE_URL"] = base_url
+                if prov.id == "deepseek":
+                    env_updates["DEEPSEEK_BASE_URL"] = base_url
+            elif changed:
+                env_updates["LLM_BASE_URL"] = prov.base_url
+
+            mode = llm.get("mode") or ds.get("mode")
+            if mode in ("auto", "cloud", "local", "mock"):
+                env_updates["LLM_MODE"] = str(mode)
+                if prov.id == "deepseek":
+                    env_updates["DEEPSEEK_MODE"] = str(mode)
+
         if mm.get("api_key"):
             env_updates["MINIMAX_API_KEY"] = str(mm["api_key"]).strip()
         if mm.get("model"):
@@ -349,10 +447,6 @@ def create_app() -> FastAPI:
             env_updates["MINIMAX_QUERY_PATH"] = str(mm["query_path"]).strip()
         if "video_workflow" in mm:
             env_updates["MINIMAX_VIDEO_WORKFLOW"] = str(mm["video_workflow"]).strip()
-        if ds.get("base_url"):
-            env_updates["DEEPSEEK_BASE_URL"] = str(ds["base_url"]).strip()
-        if ds.get("mode") in ("auto", "cloud", "local"):
-            env_updates["DEEPSEEK_MODE"] = str(ds["mode"])
         if env_updates:
             _write_env(env_updates)
 
