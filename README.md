@@ -164,7 +164,7 @@ python tools/qa_shot.py --url ...    # CDP 截图做界面回归
 
 ## 本机安全与预算护栏（v1.1.1）
 
-- **本地 API 鉴权**：启动时生成随机 token 写入 `run/token`，所有 `/api/*` 请求必须带 `X-VF-Token`；页面由服务端自动注入
+- **本地 API 鉴权**：启动时生成随机 token 写入 `run/token`（每次启动轮换），所有 `/api/*` 请求必须带 `X-VF-Token`；页面由服务端自动注入；Host 只认回环名，拦 DNS rebinding
 - **Host 校验**：只接受 `127.0.0.1` / `localhost` / `[::1]`，拦截 DNS rebinding；不再开放跨域 CORS
 - **媒体保护**：项目视频/图片需要同源 Cookie 或 token 参数，外部网页不能直接窥探 `/media/*`
 - **密钥位置**：默认写到 `%APPDATA%\VisionForge\.env`（macOS/Linux：`~/.config/visionforge/.env`），便携包拷走不会带走 Key；旧位置 `.env` 仍兼容读取

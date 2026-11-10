@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import unittest.mock
+
 import tempfile
 import unittest
 from pathlib import Path
@@ -58,6 +61,53 @@ class SecurityGuardTest(unittest.TestCase):
         self.assertEqual(client.get("/media/demo/file.mp4?token=secret-token").status_code, 200)
         client.cookies.set(security.TOKEN_COOKIE, "secret-token")
         self.assertEqual(client.get("/media/demo/file.mp4").status_code, 200)
+
+
+class TokenLifecycleTest(unittest.TestCase):
+    def _with_token_path(self, fn):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "token"
+            with unittest.mock.patch.object(security, "token_path", return_value=path):
+                return fn(path)
+
+    def test_token_rotates_on_each_start(self):
+        """默认轮换：同进程内两次取 token 也必须不同，旧 token 立即失效。"""
+        def run(path):
+            with unittest.mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("VF_TOKEN_ROTATE", None)
+                first = security.load_or_create_token()
+                second = security.load_or_create_token()
+            return first, second, path.read_text(encoding="utf-8").strip()
+
+        first, second, stored = self._with_token_path(run)
+        self.assertNotEqual(first, second)
+        self.assertEqual(stored, second)
+
+    def test_token_can_be_kept_across_restarts(self):
+        def run(path):
+            with unittest.mock.patch.dict(os.environ, {"VF_TOKEN_ROTATE": "0"}, clear=False):
+                first = security.load_or_create_token()
+                second = security.load_or_create_token()
+            return first, second
+
+        first, second = self._with_token_path(run)
+        self.assertEqual(first, second)
+
+
+class UnsafeModeTest(unittest.TestCase):
+    def test_frozen_build_needs_second_confirmation(self):
+        with unittest.mock.patch.dict(os.environ, {"VF_ALLOW_UNSAFE_API": "1"}, clear=False):
+            os.environ.pop("VF_UNSAFE_CONFIRM", None)
+            with unittest.mock.patch.object(security.sys, "frozen", True, create=True):
+                self.assertFalse(security.unsafe_mode())
+                os.environ["VF_UNSAFE_CONFIRM"] = "1"
+                self.assertTrue(security.unsafe_mode())
+        os.environ.pop("VF_UNSAFE_CONFIRM", None)
+
+    def test_source_mode_still_allows_debug_switch(self):
+        with unittest.mock.patch.dict(os.environ, {"VF_ALLOW_UNSAFE_API": "1"}, clear=False):
+            with unittest.mock.patch.object(security.sys, "frozen", False, create=True):
+                self.assertTrue(security.unsafe_mode())
 
     def test_inject_token_adds_window_value(self):
         html = security.inject_token("<html><head></head><body></body></html>", "abc")

@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -41,14 +42,29 @@ def token_path() -> Path:
 
 
 def unsafe_mode() -> bool:
-    return os.environ.get("VF_ALLOW_UNSAFE_API", "") == "1"
+    """调试开关：整体关闭 token / Host 校验。
+
+    打包版多一道确认，避免用户照抄文档把 VF_ALLOW_UNSAFE_API=1 写进 .env 后
+    以为自己是安全的。要真关，两个变量都得设。
+    """
+    if os.environ.get("VF_ALLOW_UNSAFE_API", "") != "1":
+        return False
+    if getattr(sys, "frozen", False) and os.environ.get("VF_UNSAFE_CONFIRM", "") != "1":
+        return False
+    return True
 
 
 def load_or_create_token() -> str:
-    """读取 run/token；没有就生成一个（随机 192 bit）。"""
+    """取本次进程的 token：默认每次启动都换新的（随机 192 bit）。
+
+    轮换的意义：token 以前会跨重启复用，一旦被同机进程读走就长期有效。
+    代价是重启后旧标签页要刷新一次——桌面窗口本来就会重新加载，可以接受。
+    想跨重启复用（例如脚本里写死了 token），设 VF_TOKEN_ROTATE=0。
+    """
     path = token_path()
+    rotate = os.environ.get("VF_TOKEN_ROTATE", "1").strip().lower() not in ("0", "false", "no", "off")
     try:
-        if path.exists():
+        if not rotate and path.exists():
             tok = path.read_text(encoding="utf-8").strip()
             if tok:
                 return tok
