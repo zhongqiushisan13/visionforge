@@ -108,7 +108,10 @@
   function syncChrome() {
     const meta = LANGS.find(l => l.id === VF.lang) || LANGS[0];
     document.documentElement.lang = meta.html;
-    document.documentElement.dir = VF.lang === 'ar' ? 'rtl' : 'ltr';
+    // 这是剪辑型工具：外壳（侧边栏/时间线/检查器）固定 LTR，
+    // 只让阿拉伯语文本自身右到左，避免整个界面镜像后时间轴也跟着倒过来。
+    document.documentElement.dir = 'ltr';
+    document.documentElement.classList.toggle('lang-ar', VF.lang === 'ar');
     const title = translated('VisionForge · AI 视频编导台');
     if (title) document.title = title;
   }

@@ -79,9 +79,16 @@ body{
   font-size:12px; outline:none; cursor:pointer;
 }
 .lang-select option{background:#0b1a30; color:var(--text)}
-html[dir="rtl"] .nav-item .badge{margin-left:0; margin-right:auto}
-html[dir="rtl"] .side-foot,html[dir="rtl"] .engine-card{direction:rtl}
-html[dir="rtl"] .tl-track{direction:rtl}
+/* 阿拉伯语：文本右到左，但编辑器外壳保持左到右（时间线不反转） */
+html.lang-ar .logline,html.lang-ar .hint,html.lang-ar .beat p,html.lang-ar .char p,
+html.lang-ar .step p,html.lang-ar .proj span,html.lang-ar .prov p,html.lang-ar .empty-state p,
+html.lang-ar .field label,html.lang-ar .insp-row label,html.lang-ar .shot .body b,
+html.lang-ar .shot .body p,html.lang-ar .beat b,html.lang-ar .char b,html.lang-ar .step b,
+html.lang-ar .modal h2,html.lang-ar h1,html.lang-ar .panel-head h3,html.lang-ar .sec-title{
+  direction:rtl; text-align:right;
+}
+html.lang-ar .mono,html.lang-ar .kpi .v,html.lang-ar .badge-dur,html.lang-ar .badge-id,
+html.lang-ar .pill,html.lang-ar .chip,html.lang-ar .tl-block .cap b{ direction:ltr; unicode-bidi:isolate }
 
 /* ---------------- 主区域 ---------------- */
 .main{flex:1; min-width:0; display:flex; flex-direction:column; gap:12px}

@@ -302,7 +302,7 @@ function renderDashboard() {
       <div class="chips">
         <span class="chip ok">${icon('check')}${p.mock ? 'MOCK 预览工程' : '生产工程'}</span>
         <span class="chip">${esc(p.aspect)} · ${esc(p.resolution)}</span>
-        <span class="chip">${icon('clock')}${pr.duration}s 素材</span>
+        <span class="chip">${icon('clock')}${t('{n}s 素材', { n: pr.duration })}</span>
       </div>
       <h1>${esc(p.title)}</h1>
       <div class="logline">${esc(p.script.logline || p.brief || '')}</div>
@@ -342,13 +342,13 @@ function renderDashboard() {
         ${steps.map((s, i) => `
           <div class="step ${s.done ? 'done' : ''}" data-act="step" data-step="${s.act}">
             <div class="ico">${icon(s.done ? 'check' : s.icon)}</div>
-            <div><b>${i + 1}. ${s.name}</b><p>${s.desc}</p></div>
+            <div><b>${i + 1}. ${t(s.name)}</b><p>${s.desc}</p></div>
             <button class="btn sm ghost">${s.done ? '重跑' : '执行'}</button>
           </div>`).join('')}
       </div>
     </div>
     <div class="panel">
-      <div class="panel-head">${icon('folder')}<h3>最近项目</h3><span class="sub">${(S.boot?.projects || []).length} 个</span></div>
+      <div class="panel-head">${icon('folder')}<h3>最近项目</h3><span class="sub">${t('{n} 个', { n: (S.boot?.projects || []).length })}</span></div>
       <div class="proj-list">
         ${recents.map(r => `
           <div class="proj" data-act="open-project" data-slug="${r.slug}">
@@ -725,17 +725,17 @@ function renderExport() {
           <div class="spacer"></div>
           <button class="btn sm ghost" data-act="export-costs">${icon('download')}导出</button>
         </div>
-        <div class="insp-row"><label>已发生</label><span>¥${Number(costs.total || 0).toFixed(2)}${budget ? ` / 上限 ¥${Number(budget).toFixed(2)}` : ''}</span></div>
+        <div class="insp-row"><label>已发生</label><span>¥${Number(costs.total || 0).toFixed(2)}${budget ? ` / ${t('上限')} ¥${Number(budget).toFixed(2)}` : ''}</span></div>
         <div class="insp-row"><label>调用次数</label><span>${(costs.entries || []).length}</span></div>
         <div class="hint">${(costs.entries || []).slice(-4).map(e => `${esc(e.ts || '')} · ${esc(e.provider || '')} · ¥${Number(e.est || 0).toFixed(2)}`).join('<br>') || t('还没有付费调用；本地/mock 通道记 0 元')}</div>
       </div>
       <div class="panel">
         <div class="panel-head">${icon('terminal')}<h3>生成参数</h3></div>
         <div class="hint">
-          剧本：${esc(S.boot?.providers?.llm?.label || S.boot?.providers?.deepseek?.label || '-')} · ${esc(S.boot?.providers?.llm?.model || S.boot?.providers?.deepseek?.model || '-')}<br>
-          镜头：${esc(S.boot?.providers?.minimax?.model || '-')} · ${esc(S.boot?.providers?.minimax?.resolution || '-')}<br>
-          关键帧：ComfyUI ${esc(S.boot?.providers?.comfyui?.workflow || '-')}<br>
-          LoRA：${esc(S.boot?.providers?.comfyui?.lora || '工作流默认')}
+          ${t('剧本：')}${esc(S.boot?.providers?.llm?.label || S.boot?.providers?.deepseek?.label || '-')} · ${esc(S.boot?.providers?.llm?.model || S.boot?.providers?.deepseek?.model || '-')}<br>
+          ${t('镜头：')}${esc(S.boot?.providers?.minimax?.model || '-')} · ${esc(S.boot?.providers?.minimax?.resolution || '-')}<br>
+          ${t('关键帧：')}ComfyUI ${esc(S.boot?.providers?.comfyui?.workflow || '-')}<br>
+          ${t('LoRA：')}${esc(S.boot?.providers?.comfyui?.lora || t('工作流默认'))}
         </div>
       </div>
     </div>
@@ -1477,8 +1477,12 @@ document.addEventListener('keydown', e => {
     S.workflows = (await api('/api/workflows')).files || [];
     // 支持 #settings / #timeline 这类深链，方便截图与排错
     const hash = (location.hash || '').replace('#', '');
-    if (VIEWS[hash]) S.view = hash;
-    if (S.view === 'settings') render();
+    if (VIEWS[hash]) {
+      S.view = hash;
+      render();
+    } else if (S.view === 'settings') {
+      render();
+    }
   } catch (e) {
     document.body.insertAdjacentHTML('beforeend',
       `<div style="position:fixed;inset:0;display:grid;place-items:center;z-index:99;color:#ffb3c0;font-size:14px">

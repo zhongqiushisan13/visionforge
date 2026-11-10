@@ -53,6 +53,25 @@ class TestI18nCatalog(unittest.TestCase):
         for lang in LANGS + ("zh-CN",):
             self.assertIn(f"id: '{lang}'", js)
 
+    def test_high_risk_strings_present_everywhere(self):
+        """这些是曾经漏翻的：成片页右栏、分镜按钮、时间线工具条。"""
+        must = ("成本小结", "估算，非账单", "已发生", "调用次数", "生成参数",
+                "剧本：", "镜头：", "关键帧：", "工作流默认", "素材",
+                "预览", "编辑", "重拍", "出关键帧", "导入素材",
+                "用当前剪辑合成", "补渲缺失镜头", "下载 MP4", "上传 BGM")
+        for lang in LANGS:
+            data = load(lang)
+            missing = [k for k in must if k not in data]
+            self.assertFalse(missing, f"{lang} 缺少 {missing}")
+
+    def test_arabic_keeps_ltr_shell(self):
+        """阿拉伯语只让文本 RTL：整体 dir=ltr，时间线不反转。"""
+        js = (STATIC / "i18n.js").read_text(encoding="utf-8")
+        self.assertIn("document.documentElement.dir = 'ltr'", js)
+        html = (STATIC / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn('[dir="rtl"] .tl-track', html)
+        self.assertIn("html.lang-ar", html)
+
 
 if __name__ == "__main__":
     unittest.main()
