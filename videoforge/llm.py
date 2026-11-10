@@ -117,8 +117,9 @@ class DeepSeek:
     def __init__(self, cfg: DeepSeekConfig):
         self.cfg = cfg
         self.session = requests.Session()
-        # 云端厂商（OpenAI / Claude / Gemini / Grok）在国内通常要走代理，
-        # 这里保持 requests 默认行为：跟随 HTTP(S)_PROXY，不强行直连。
+        # 云端厂商（OpenAI / Claude / Gemini / Grok）在国内通常要走代理，跟随 HTTP(S)_PROXY；
+        # 但本地 Ollama / vLLM 不能往代理里塞，否则 127.0.0.1 的请求会被代理拒掉。
+        self.session.trust_env = not cfg.is_local
         self.usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
         self._model = cfg.model
 

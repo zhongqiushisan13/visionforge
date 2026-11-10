@@ -41,6 +41,11 @@ class TestRegistry(unittest.TestCase):
         ollama = llm_providers.get("ollama")
         self.assertTrue(ollama.keyless and ollama.local)
 
+    def test_proxy_follows_cloud_but_not_local(self):
+        """云端要走系统代理，本地 Ollama 不能被塞进代理。"""
+        self.assertTrue(make("openai", api_key="sk-x").session.trust_env)
+        self.assertFalse(make("ollama", api_key="").session.trust_env)
+
 
 class TestSettingsResolution(unittest.TestCase):
     def test_env_picks_provider_and_model(self):
