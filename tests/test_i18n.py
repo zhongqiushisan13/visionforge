@@ -58,7 +58,8 @@ class TestI18nCatalog(unittest.TestCase):
         must = ("成本小结", "估算，非账单", "已发生", "调用次数", "生成参数",
                 "剧本：", "镜头：", "关键帧：", "工作流默认", "素材",
                 "预览", "编辑", "重拍", "出关键帧", "导入素材",
-                "用当前剪辑合成", "补渲缺失镜头", "下载 MP4", "上传 BGM")
+                "用当前剪辑合成", "补渲缺失镜头", "下载 MP4", "上传 BGM",
+                "撤销", "重做", "自动保存", "失败原因", "重试失败镜头")
         for lang in LANGS:
             data = load(lang)
             missing = [k for k in must if k not in data]

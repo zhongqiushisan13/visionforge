@@ -22,6 +22,7 @@ from .. import llm_providers
 from ..config import APP_ROOT, BUNDLE_ROOT, PROJECT_ROOT, Settings, env_file_path, tighten_file_permissions
 from ..edit_commands import apply_ops, interpret
 from ..editing import FILTER_PRESETS, TITLE_POSITIONS, TRANSITIONS, timeline
+from ..failures import failed_shots, summarize as summarize_failures
 from ..llm import DeepSeek
 from ..pipeline import Director
 from ..providers.comfyui import ComfyUIProvider
@@ -112,6 +113,7 @@ def _project_payload(p: Project) -> Dict[str, Any]:
     d["srt_url"] = _media_url(slug, "output", "", p.path("output") / "subtitles.srt")
     d["counts"] = p.counts()
     d["costs"] = p.meta.get("costs") or {"total": 0.0, "entries": []}
+    d["failures"] = summarize_failures(p.shots)
     enabled = [s for s in p.shots if s.enabled]
     starts, total = timeline(enabled, 0.4)
     d["timeline"] = {"ids": [s.id for s in enabled], "starts": starts, "total": total}
@@ -554,6 +556,28 @@ def create_app() -> FastAPI:
         return {"ok": True, "moved_to": str(target)}
 
     # ---------------- 镜头 ---------------- #
+    @app.post("/api/projects/{slug}/shots/restore")
+    def restore_shots(slug: str, payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """整体回填镜头数组，供前端撤销/重做。文件不动，只改 project.json。"""
+        _guard_busy()
+        p = _load(slug)
+        items = payload.get("shots")
+        if not isinstance(items, list) or not items:
+            raise HTTPException(400, "shots 必须是非空数组")
+        if len(items) > 200:
+            raise HTTPException(400, "一次最多恢复 200 条镜头")
+        known = set(Shot.__dataclass_fields__)
+        restored: List[Shot] = []
+        for index, raw in enumerate(items):
+            if not isinstance(raw, dict):
+                raise HTTPException(400, "shots 元素必须是对象")
+            shot = Shot(**{k: v for k, v in raw.items() if k in known})
+            shot.index = index
+            restored.append(shot)
+        p.shots = restored
+        p.save()
+        return _project_payload(p)
+
     @app.patch("/api/projects/{slug}/shots/{sid}")
     def patch_shot(slug: str, sid: str, payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         p = _load(slug)
@@ -784,6 +808,9 @@ def create_app() -> FastAPI:
         if action not in ("voice", "keyframes", "clips", "render", "assemble", "all"):
             raise HTTPException(400, f"未知操作：{action}")
         force = bool(payload.get("force"))
+        only = str(payload.get("only") or "")
+        if only not in ("", "failed"):
+            raise HTTPException(400, f"未知筛选：{only}")
         ids = payload.get("shots") or []
         _project_dir(slug)  # 校验存在
 
@@ -794,7 +821,12 @@ def create_app() -> FastAPI:
             if p.mock:                       # mock 工程永远不碰付费接口
                 s.pipeline.mock = True
             subset = [x for x in p.shots if x.id in ids] if ids else None
-            result: Dict[str, Any] = {"action": action}
+            if only == "failed":
+                base = subset if subset is not None else p.shots
+                subset = failed_shots(base)
+                if not subset:
+                    return {"action": action, "skipped": "no-failed"}
+            result: Dict[str, Any] = {"action": action, "targets": len(subset or p.shots)}
             if action == "voice":
                 result["voice"] = d.voice(p, subset, force=force)
             elif action == "keyframes":

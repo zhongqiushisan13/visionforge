@@ -75,6 +75,163 @@ function toast(msg, kind = 'ok', ms = 3200) {
   setTimeout(() => el.remove(), ms);
 }
 
+/* ---------------- 撤销 / 重做 / 自动保存 ---------------- */
+const HIST = { undo: [], redo: [], limit: 40 };
+const AUTO = { timer: 0, dirty: false, sid: '' };
+
+function jobRunning() { return !!(S.job && S.job.status === 'running'); }
+function cloneShots() { return JSON.parse(JSON.stringify(S.project?.shots || [])); }
+
+/** 改动前留快照；任务运行中不动历史，避免把中间状态写进撤销栈 */
+function snapshotShots() {
+  if (jobRunning() || !S.project) return false;
+  HIST.undo.push(cloneShots());
+  if (HIST.undo.length > HIST.limit) HIST.undo.shift();
+  HIST.redo.length = 0;
+  return true;
+}
+
+async function restoreShots(shots, msg) {
+  const r = await api(`/api/projects/${S.project.slug}/shots/restore`,
+    { method: 'POST', body: { shots } });
+  S.project = r;
+  AUTO.dirty = false; AUTO.sid = '';
+  render();
+  if (msg) toast(msg, 'ok', 1800);
+}
+
+async function undoShots() {
+  if (jobRunning()) return toast(t('任务运行中，先等它结束'), 'warn');
+  if (!HIST.undo.length) return toast(t('没有可撤销的操作'), 'warn');
+  const prev = HIST.undo.pop();
+  HIST.redo.push(cloneShots());
+  await restoreShots(prev, t('已撤销'));
+}
+
+async function redoShots() {
+  if (jobRunning()) return toast(t('任务运行中，先等它结束'), 'warn');
+  if (!HIST.redo.length) return toast(t('没有可撤销的操作'), 'warn');
+  const next = HIST.redo.pop();
+  HIST.undo.push(cloneShots());
+  await restoreShots(next, t('已重做'));
+}
+
+const FAIL_KINDS = {
+  auth: ['鉴权失败', '检查 API Key 是否有效、是否有该模型权限'],
+  rate: ['被限流', '等几分钟再试，或换一个模型/账号'],
+  quota: ['余额或预算不足', '充值，或调高项目预算 VF_BUDGET'],
+  vram: ['显存不足', '降分辨率到 512×288，并把 VF_WORKERS 设为 1'],
+  safety: ['内容审核拦截', '改台词或提示词，避开敏感描述'],
+  model: ['模型不存在', '检查模型名与账号权限'],
+  timeout: ['任务超时', '本地模型请调大 MINIMAX_VIDEO_TIMEOUT'],
+  empty: ['没有产出文件', '看日志确认工作流输出节点是否正确'],
+  other: ['其他错误', '展开任务日志看原始报错'],
+};
+
+function failurePanel(p) {
+  const f = p.failures;
+  if (!f || !f.total) return '';
+  const rows = (f.kinds || []).map(k => {
+    const meta = FAIL_KINDS[k.kind] || FAIL_KINDS.other;
+    return `<div class="insp-row"><label>${esc(t(meta[0]))}</label>
+      <span>${k.count} · ${esc(t(meta[1]))}</span></div>`;
+  }).join('');
+  return `<div class="panel" style="margin-bottom:14px;border-color:rgba(226,75,74,.35)">
+    <div class="panel-head">${icon('alert')}<h3>${t('失败原因')}</h3>
+      <span class="sub">${t('失败 {n} 个', { n: f.total })}</span>
+      <div class="spacer"></div>
+      <button class="btn sm" data-act="retry-failed">${icon('refresh')}${t('重试失败镜头')}</button>
+    </div>
+    ${rows}
+  </div>`;
+}
+
+function shotFieldsFromForm() {
+  return {
+    duration: Number($('#dDur').value),
+    trim_start: Number($('#dTrim').value),
+    subtitle: $('#dSub').value,
+    dialogue: $('#dDlg').value,
+    transition: $('#dTrans').value,
+    transition_duration: Number($('#dTransDur')?.value || 0),
+    enabled: $('#dEnabled').checked,
+    speed: Number($('#dSpeed')?.value || 1),
+    mirror: $('#dMirror')?.checked || false,
+    reverse: $('#dReverse')?.checked || false,
+    volume: Number($('#dVol')?.value ?? 1),
+    filter_preset: $('#dFilter')?.value || 'none',
+    brightness: Number($('#dBright')?.value || 0),
+    contrast: Number($('#dContrast')?.value || 1),
+    saturation: Number($('#dSat')?.value || 1),
+    temperature: Number($('#dTemp')?.value || 0),
+    title_text: $('#dTitle')?.value || '',
+    title_position: $('#dTitlePos')?.value || 'bottom',
+    title_size: Number($('#dTitleSize')?.value || 0),
+    video_prompt: $('#dVp')?.value || '',
+    image_prompt: $('#dIp')?.value || '',
+  };
+}
+
+async function saveShotFields(sid, silent = false) {
+  const r = await api(`/api/projects/${S.project.slug}/shots/${sid}`,
+    { method: 'PATCH', body: shotFieldsFromForm() });
+  const i = S.project.shots.findIndex(s => s.id === sid);
+  if (i >= 0 && r.shot) Object.assign(S.project.shots[i], r.shot);
+  if (!silent) render();
+  return r;
+}
+
+function paintAutosave(text, bad) {
+  const el = $('#autoSaveHint');
+  if (!el) return;
+  el.textContent = t(text);
+  el.style.color = bad ? 'var(--danger)' : 'var(--dim)';
+}
+
+/** 检查器里的改动 800ms 防抖自动保存；任务运行中不抢写 */
+function bindInspectorAutosave() {
+  const box = $('#inspector');
+  if (!box || box.dataset.auto) return;
+  box.dataset.auto = '1';
+  const kick = () => {
+    const sid = box.dataset.shot;
+    if (!sid || jobRunning()) return;
+    if (AUTO.sid !== sid || !AUTO.dirty) {
+      snapshotShots();
+      AUTO.sid = sid;
+      AUTO.dirty = true;
+    }
+    paintAutosave('自动保存中…');
+    clearTimeout(AUTO.timer);
+    AUTO.timer = setTimeout(async () => {
+      try {
+        await saveShotFields(sid, true);
+        AUTO.dirty = false;
+        paintAutosave('已自动保存');
+      } catch (err) {
+        paintAutosave('自动保存失败', true);
+      }
+    }, 800);
+  };
+  box.addEventListener('input', kick);
+  box.addEventListener('change', kick);
+}
+
+// Ctrl/Cmd+Z 撤销、Ctrl+Shift+Z 或 Ctrl+Y 重做；输入框里保留原生行为
+document.addEventListener('keydown', e => {
+  const tag = (e.target?.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target?.isContentEditable) return;
+  if (!(e.ctrlKey || e.metaKey)) return;
+  const key = (e.key || '').toLowerCase();
+  if (key === 'z') {
+    e.preventDefault();
+    if (e.shiftKey) redoShots(); else undoShots();
+  } else if (key === 'y') {
+    e.preventDefault();
+    redoShots();
+  }
+});
+
 /* ------------------------------------------------------------------ */
 /* 星空粒子背景                                                        */
 /* ------------------------------------------------------------------ */
@@ -250,6 +407,9 @@ function render() {
     bindSettings();
     if (!S.doctor) loadDoctor();
   }
+  AUTO.dirty = false;
+  AUTO.sid = '';
+  bindInspectorAutosave();
   applyI18n(view);
 }
 
@@ -311,6 +471,7 @@ function renderDashboard() {
         <span class="chip">${icon('check')}${t('已出片 {n}', { n: pr.rendered })}</span>
         <span class="chip">${icon('mic')}${t('已配音 {n}', { n: voice })}</span>
         ${hasOut ? `<span class="chip ok">${icon('film')}成片就绪</span>` : `<span class="chip warn">${icon('alert')}尚未合成</span>`}
+        ${p.failures?.total ? `<span class="chip warn" data-act="retry-failed" style="cursor:pointer">${icon('refresh')}${t('重试 {n} 个失败', { n: p.failures.total })}</span>` : ''}
       </div>
       <div class="row">
         <button class="btn primary" data-act="run-all">${icon('sparkle')}${hasOut ? '重新出片' : '一键成片'}</button>
@@ -421,11 +582,15 @@ function renderStoryboard() {
     <button class="btn sm" data-act="do" data-action="clips">${icon('video')}生成镜头</button>
     <button class="btn sm" data-act="do" data-action="voice">${icon('mic')}生成配音</button>
     <button class="btn sm" data-act="do" data-action="render">${icon('sparkle')}全量渲染</button>
+    ${p.failures?.total ? `<button class="btn sm" data-act="retry-failed">${icon('refresh')}${t('重试 {n} 个失败', { n: p.failures.total })}</button>` : ''}
+    <button class="btn sm ghost" data-act="undo" title="${t('撤销')}">${icon('undo')}${t('撤销')}</button>
+    <button class="btn sm ghost" data-act="redo" title="${t('重做')}">${icon('redo')}${t('重做')}</button>
     <div class="spacer"></div>
     <span class="hint">${t('共 {total} 条 · {rendered} 已出片 · 失败 {failed}', {
       total: p.shots.length, rendered: p.progress.rendered, failed: p.progress.failed })}</span>
     <button class="btn sm ghost" data-act="goto" data-view="timeline">${icon('scissors')}手动剪辑</button>
   </div>
+  ${failurePanel(p)}
   <div class="shot-grid">
     ${p.shots.map(s => `
       <div class="shot" data-shot="${s.id}">
@@ -474,6 +639,8 @@ function renderTimeline() {
       <div class="panel-head">${icon('timeline')}<h3>时间线</h3>
         <span class="sub">${t('拖动排序 · 点选编辑 · 总时长 {sec}s', { sec: total })}</span>
         <div class="spacer"></div>
+        <button class="btn sm ghost" data-act="undo" title="${t('撤销')}">${icon('undo')}</button>
+        <button class="btn sm ghost" data-act="redo" title="${t('重做')}">${icon('redo')}</button>
         <button class="btn sm ghost" data-act="import-clip">${icon('upload')}导入素材</button>
       </div>
       <div class="row" style="margin-bottom:11px">
@@ -501,7 +668,7 @@ function renderTimeline() {
         <span class="hint">停用的镜头不会进成片；trim 只影响成片，不改源文件</span>
       </div>
     </div>
-    <div class="panel tight inspector" id="inspector">${inspectorHtml(sel, p)}</div>
+    <div class="panel tight inspector" id="inspector" data-shot="${sel.id}">${inspectorHtml(sel, p)}</div>
   </div>`;
 }
 
@@ -527,7 +694,7 @@ function inspectorHtml(s, p) {
 
   return `
     <div class="panel-head">${icon('edit')}<h3>${s.id}</h3>${statusPill(s.status)}
-      <div class="spacer"></div><span class="hint">${esc(s.provider || '')}</span></div>
+      <div class="spacer"></div><span class="hint" id="autoSaveHint">${t('自动保存')}</span></div>
     <div class="shot-preview">
       ${s.clip_url ? `<video src="${s.clip_url}" muted preload="metadata" controls></video>`
         : s.keyframe_url ? `<img src="${s.keyframe_url}">` : `<div class="none" style="aspect-ratio:16/9;display:grid;place-items:center;color:#26405f">${icon('image')}</div>`}
@@ -636,6 +803,7 @@ function bindTimeline() {
     const ids = S.project.shots.map(s => s.id);
     const from = ids.indexOf(dragId), to = ids.indexOf(target.dataset.id);
     ids.splice(to, 0, ids.splice(from, 1)[0]);
+    snapshotShots();
     try {
       await api(`/api/projects/${S.project.slug}/reorder`, { method: 'POST', body: { order: ids } });
       await openProject(S.project.slug, false);
@@ -649,7 +817,11 @@ function bindTimeline() {
     S.selected = b.dataset.id;
     $$('.tl-block').forEach(x => x.classList.toggle('sel', x === b));
     const s = S.project.shots.find(x => x.id === S.selected);
-    $('#inspector').innerHTML = inspectorHtml(s, S.project);
+    const box = $('#inspector');
+    box.dataset.shot = S.selected;
+    box.innerHTML = inspectorHtml(s, S.project);
+    AUTO.dirty = false;
+    AUTO.sid = S.selected;
     bindInspector();
   });
   bindInspector();
@@ -1233,6 +1405,7 @@ document.addEventListener('click', async e => {
   }
   if (act === 'split-shot') {
     const at = Number($('#dSplitAt')?.value || 0);
+    snapshotShots();
     try {
       const r = await api(`/api/projects/${S.project.slug}/shots/${el.dataset.shot}/split`,
         { method: 'POST', body: { at } });
@@ -1246,6 +1419,7 @@ document.addEventListener('click', async e => {
   if (act === 'ai-edit') {
     const text = $('#aiCmd')?.value.trim();
     if (!text) return toast(t('先写一句指令，例：全部调成黑白，第2镜1.2倍速'), 'warn');
+    snapshotShots();
     el.disabled = true;
     el.innerHTML = `${icon('refresh', 'spin')}解析中`;
     try {
@@ -1258,40 +1432,29 @@ document.addEventListener('click', async e => {
     el.disabled = false;
     return;
   }
+  if (act === 'undo') { await undoShots(); return; }
+  if (act === 'redo') { await redoShots(); return; }
+  if (act === 'retry-failed') {
+    if (jobRunning()) return toast(t('任务运行中，先等它结束'), 'warn');
+    snapshotShots();
+    try {
+      const r = await api(`/api/projects/${S.project.slug}/actions`,
+        { method: 'POST', body: { action: 'render', only: 'failed', force: true } });
+      showJob(r.job, t('重试失败镜头'));
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
   if (act === 'save-shot') {
     const sid = el.dataset.shot;
-    const body = {
-      duration: Number($('#dDur').value),
-      trim_start: Number($('#dTrim').value),
-      subtitle: $('#dSub').value,
-      dialogue: $('#dDlg').value,
-      transition: $('#dTrans').value,
-      transition_duration: Number($('#dTransDur')?.value || 0),
-      enabled: $('#dEnabled').checked,
-      speed: Number($('#dSpeed')?.value || 1),
-      mirror: $('#dMirror')?.checked || false,
-      reverse: $('#dReverse')?.checked || false,
-      volume: Number($('#dVol')?.value ?? 1),
-      filter_preset: $('#dFilter')?.value || 'none',
-      brightness: Number($('#dBright')?.value || 0),
-      contrast: Number($('#dContrast')?.value || 1),
-      saturation: Number($('#dSat')?.value || 1),
-      temperature: Number($('#dTemp')?.value || 0),
-      title_text: $('#dTitle')?.value || '',
-      title_position: $('#dTitlePos')?.value || 'bottom',
-      title_size: Number($('#dTitleSize')?.value || 0),
-      video_prompt: $('#dVp')?.value || '',
-      image_prompt: $('#dIp')?.value || '',
-    };
+    if (!AUTO.dirty) snapshotShots();
     try {
-      await api(`/api/projects/${S.project.slug}/shots/${sid}`, { method: 'PATCH', body });
-      await openProject(S.project.slug, false);
-      render();
+      await saveShotFields(sid);
       toast(t('镜头已保存，重新合成生效'));
     } catch (err) { toast(err.message, 'err'); }
     return;
   }
   if (act === 'move-shot') {
+    snapshotShots();
     try {
       await api(`/api/projects/${S.project.slug}/shots/${el.dataset.shot}/move`,
         { method: 'POST', body: { direction: el.dataset.dir } });
@@ -1300,6 +1463,7 @@ document.addEventListener('click', async e => {
     return;
   }
   if (act === 'dup-shot') {
+    snapshotShots();
     try {
       await api(`/api/projects/${S.project.slug}/shots/${el.dataset.shot}/duplicate`, { method: 'POST' });
       await openProject(S.project.slug, false); render(); toast(t('已复制镜头'));
@@ -1308,6 +1472,7 @@ document.addEventListener('click', async e => {
   }
   if (act === 'del-shot') {
     if (!confirm(t('删掉这条镜头？文件会留着，列表里不再出现。'))) return;
+    snapshotShots();
     try {
       await api(`/api/projects/${S.project.slug}/shots/${el.dataset.shot}`, { method: 'DELETE' });
       S.selected = null;
@@ -1320,6 +1485,7 @@ document.addEventListener('click', async e => {
     input.type = 'file'; input.accept = 'video/*';
     input.onchange = async () => {
       if (!input.files[0]) return;
+      snapshotShots();
       const f = input.files[0];
       const url = act === 'import-clip'
         ? `/api/projects/${S.project.slug}/shots/import?filename=${encodeURIComponent(f.name)}`
