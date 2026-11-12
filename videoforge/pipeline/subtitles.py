@@ -151,21 +151,43 @@ def write_title_ass(path: Path, shots: Sequence[Shot], cfg: RenderConfig, *,
     return path
 
 
+def _srt_ts(t: float) -> str:
+    """毫秒时间戳。必须用 round 再拆位——5.55 * 1000 在浮点里是 5549.99，直接 int 会少 1ms。"""
+    total_ms = int(round(max(0.0, t) * 1000))
+    h, total_ms = divmod(total_ms, 3_600_000)
+    m, total_ms = divmod(total_ms, 60_000)
+    s, ms = divmod(total_ms, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def build_srt_text(rows: Sequence[dict]) -> str:
+    """把字幕表（起止秒 + 文本）转成 SRT 文本；空文本行自动跳过。
+
+    和烧录用的 SRT 区别：不按字数硬折行——播放器会自己折，硬折反而在宽屏上难看。
+    """
+    blocks: List[str] = []
+    index = 1
+    for row in rows:
+        text = str(row.get("text") or "").replace("\r", "").strip()
+        if not text:
+            continue
+        start = float(row.get("start") or 0)
+        end = max(start + 0.2, float(row.get("end") or start + 1))
+        blocks.extend([str(index), f"{_srt_ts(start)} --> {_srt_ts(end)}", text, ""])
+        index += 1
+    return "\n".join(blocks).rstrip() + "\n" if blocks else ""
+
+
 def write_srt(path: Path, shots: Sequence[Shot], *, offset: float = 0.0,
               durations: Sequence[float] | None = None,
               starts: Sequence[float] | None = None) -> Path:
-    def fmt(t: float) -> str:
-        h, rem = divmod(max(0.0, t), 3600)
-        m, s = divmod(rem, 60)
-        return f"{int(h):02d}:{int(m):02d}:{int(s):02d},{int((s - int(s)) * 1000):03d}"
-
     lines, cursor, idx = [], offset, 1
     for i, shot in enumerate(shots):
         text = shot.text.strip()
         dur = float(durations[i] if durations and i < len(durations) else shot.duration)
         start_at = float(starts[i]) if starts and i < len(starts) else cursor
         if text:
-            lines += [str(idx), f"{fmt(start_at + 0.1)} --> {fmt(start_at + dur - 0.1)}",
+            lines += [str(idx), f"{_srt_ts(start_at + 0.1)} --> {_srt_ts(start_at + dur - 0.1)}",
                       re.sub(r"\\N", "\n", wrap_text(text)), ""]
             idx += 1
         cursor = start_at + dur

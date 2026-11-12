@@ -75,6 +75,22 @@ function toast(msg, kind = 'ok', ms = 3200) {
   setTimeout(() => el.remove(), ms);
 }
 
+/** 带鉴权头的二进制下载：诊断包、项目包都走这里 */
+async function downloadFrom(url, filename) {
+  const res = await fetch(url, { headers: authHeaders() });
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { msg = (await res.json()).detail || msg; } catch (e) { /* 非 JSON 错误 */ }
+    throw new Error(msg);
+  }
+  const blob = await res.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+}
+
 /* ---------------- 撤销 / 重做 / 自动保存 ---------------- */
 const HIST = { undo: [], redo: [], limit: 40 };
 const AUTO = { timer: 0, dirty: false, sid: '' };
@@ -848,6 +864,50 @@ function bindInspector() {
 /* ------------------------------------------------------------------ */
 /* 成片                                                                */
 /* ------------------------------------------------------------------ */
+function fmtClock(sec) {
+  const v = Math.max(0, Number(sec) || 0);
+  const m = Math.floor(v / 60), s = v % 60;
+  return `${String(m).padStart(2, '0')}:${s.toFixed(1).padStart(4, '0')}`;
+}
+
+/** 字幕表：按时间线摊平（含转场重叠），与后端 subtitle_rows 保持同一算法 */
+function subtitleTableRows(p) {
+  const tl = p.timeline || { ids: [], starts: [] };
+  const ids = tl.ids || [];
+  return ids.map((id, i) => {
+    const s = p.shots.find(x => x.id === id) || {};
+    const start = Number((tl.starts || [])[i] || 0);
+    const end = i + 1 < ids.length ? Number(tl.starts[i + 1]) : start + Number(s.duration || 0);
+    const text = String(s.subtitle || s.dialogue || '').trim();
+    return { id, index: i + 1, start, end: Math.max(start, end - 0.05), text, speaker: s.speaker || '' };
+  });
+}
+
+function subtitlePanel(p) {
+  const rows = subtitleTableRows(p);
+  if (!rows.length) return '';
+  return `<div class="panel" style="margin-top:14px">
+      <div class="panel-head">${icon('list')}<h3>${t('字幕表')}</h3>
+        <span class="sub">${t('{n} 行 · 空行会跳过', { n: rows.length })}</span>
+        <div class="spacer"></div>
+        <button class="btn sm ghost" data-act="save-subs">${icon('save')}${t('保存字幕')}</button>
+        <a class="btn sm ghost" href="/api/projects/${p.slug}/subtitles.srt">${icon('download')}${t('下载 SRT')}</a>
+      </div>
+      <div class="hint" style="margin-bottom:8px">${t('留空则回落到台词')}</div>
+      <div class="sub-scroll">
+        <table class="sub-table">
+          <thead><tr><th>#</th><th>${t('时间')}</th><th>${t('说话人')}</th><th>${t('文本')}</th></tr></thead>
+          <tbody>${rows.map(r => `<tr>
+            <td class="mono">${r.index}</td>
+            <td class="mono nowrap">${fmtClock(r.start)} – ${fmtClock(r.end)}</td>
+            <td class="nowrap">${esc(r.speaker)}</td>
+            <td><input class="input sub-input" data-shot="${r.id}" value="${esc(r.text)}"></td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
 function renderExport() {
   const p = S.project;
   const out = p.output_url;
@@ -872,6 +932,7 @@ function renderExport() {
         <button class="btn sm ghost" data-act="goto" data-view="timeline">${icon('scissors')}回去改剪辑</button>
       </div>
       <div class="log-box" id="exportLog">${(S.jobLogs || []).slice(-12).map(l => esc(l)).join('\n') || '等待任务…'}</div>
+      ${subtitlePanel(p)}
     </div>
     <div>
       <div class="panel" style="margin-bottom:14px">
@@ -1099,6 +1160,19 @@ function renderSettings() {
       </div>
 
       <div class="panel" style="margin-bottom:14px">
+        <div class="panel-head">${icon('download')}<h3>${t('诊断与备份')}</h3>
+          <span class="sub">${t('诊断包已脱敏，可直接发出来')}</span></div>
+        <div class="row" style="flex-wrap:wrap;margin-bottom:8px">
+          <button class="btn sm" data-act="diag-bundle">${icon('download')}${t('导出诊断包')}</button>
+          <button class="btn sm ghost" data-act="pkg-export">${icon('folder')}${t('导出项目包')}</button>
+          <label class="btn sm ghost" style="margin:0">${icon('upload')}${t('导入项目包')}
+            <input type="file" accept=".vfpkg,.zip" id="pkgFile" hidden></label>
+        </div>
+        <label class="chk"><input type="checkbox" id="pkgWithOutput"> ${t('包含成片')}</label>
+        <div class="hint" style="margin-top:6px">项目包含 project.json 与素材，换机器可继续改；导入不会覆盖同名项目。</div>
+      </div>
+
+      <div class="panel" style="margin-bottom:14px">
         <div class="panel-head">${icon('cloud')}<h3>运行环境</h3></div>
         <div class="hint">
           工作目录：<span class="mono">${esc(S.boot?.workspace || '')}</span><br>
@@ -1119,6 +1193,31 @@ function renderSettings() {
 }
 
 function bindSettings() {
+  const pkg = $('#pkgFile');
+  if (pkg && !pkg.dataset.bound) {
+    pkg.dataset.bound = '1';
+    pkg.addEventListener('change', async () => {
+      const file = pkg.files[0];
+      if (!file) return;
+      toast(t('正在导入项目包…'), 'warn', 3000);
+      try {
+        const res = await fetch('/api/projects/import-package', {
+          method: 'POST', body: file, headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || res.statusText);
+        await boot();
+        await openProject(data.slug);
+        S.view = 'dashboard';
+        render();
+        toast(t('项目已导入'));
+      } catch (err) {
+        toast(err.message, 'err', 5000);
+      } finally {
+        pkg.value = '';
+      }
+    });
+  }
   const sel = $('#llmProvider');
   if (!sel || sel.dataset.bound) return;
   sel.dataset.bound = '1';
@@ -1364,6 +1463,39 @@ document.addEventListener('click', async e => {
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       toast(t('成本小结已导出'));
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'diag-bundle') {
+    el.disabled = true;
+    try {
+      await downloadFrom('/api/diagnostics/bundle', 'visionforge-diag.zip');
+      toast(t('诊断包已导出'));
+    } catch (err) { toast(err.message, 'err', 5000); }
+    el.disabled = false;
+    return;
+  }
+  if (act === 'pkg-export') {
+    if (!S.project) return toast(t('先打开一个项目'), 'warn');
+    const withOut = $('#pkgWithOutput')?.checked ? 1 : 0;
+    el.disabled = true;
+    try {
+      await downloadFrom(`/api/projects/${S.project.slug}/package?include_output=${withOut}`,
+        `${S.project.slug}.vfpkg`);
+      toast(t('项目包已导出'));
+    } catch (err) { toast(err.message, 'err', 5000); }
+    el.disabled = false;
+    return;
+  }
+  if (act === 'save-subs') {
+    const rows = $$('.sub-input').map(input => ({ shot_id: input.dataset.shot, text: input.value }));
+    if (!rows.length) return;
+    snapshotShots();
+    try {
+      const r = await api(`/api/projects/${S.project.slug}/subtitles`, { method: 'POST', body: { rows } });
+      await openProject(S.project.slug, false);
+      render();
+      toast(t('字幕已保存') + (r.changed ? ` · ${r.changed}` : ''));
     } catch (err) { toast(err.message, 'err'); }
     return;
   }

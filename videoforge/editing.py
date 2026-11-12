@@ -104,6 +104,31 @@ def overlaps(shots: Sequence, default_td: float = 0.4) -> List[float]:
     return out
 
 
+def subtitle_rows(shots: Sequence, default_td: float = 0.4) -> Tuple[List[Dict[str, object]], float]:
+    """把启用的镜头摊成字幕表：序号、起止秒、文本、说话人。
+
+    时间轴与成片一致（含转场重叠），所以表里的时间可以直接拿去对轴。
+    没台词的镜头也保留一行（text 为空），方便在表里补写。
+    """
+    enabled = [s for s in shots if getattr(s, "enabled", True)]
+    starts, total = timeline(enabled, default_td)
+    rows: List[Dict[str, object]] = []
+    for i, shot in enumerate(enabled):
+        start = float(starts[i])
+        end = float(starts[i + 1]) if i + 1 < len(enabled) else start + float(shot.duration)
+        text = (getattr(shot, "subtitle", "") or getattr(shot, "dialogue", "") or "").strip()
+        rows.append({
+            "shot_id": shot.id,
+            "index": i + 1,
+            "start": round(start, 3),
+            "end": round(max(start, end - 0.05), 3),
+            "text": text,
+            "speaker": getattr(shot, "speaker", "") or "",
+            "empty": not text,
+        })
+    return rows, total
+
+
 def color_chain(shot) -> List[str]:
     """按镜头参数拼调色链：预设 → 亮度/对比/饱和 → 色温。"""
     chain: List[str] = []

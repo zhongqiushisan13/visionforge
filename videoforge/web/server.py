@@ -14,21 +14,25 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 
 from .. import __version__
 from .. import llm_providers
 from ..config import APP_ROOT, BUNDLE_ROOT, PROJECT_ROOT, Settings, env_file_path, tighten_file_permissions
+from ..diagnostics import bundle_bytes, suggested_name as diag_name
 from ..edit_commands import apply_ops, interpret
-from ..editing import FILTER_PRESETS, TITLE_POSITIONS, TRANSITIONS, timeline
+from ..editing import FILTER_PRESETS, TITLE_POSITIONS, TRANSITIONS, subtitle_rows, timeline
 from ..failures import failed_shots, summarize as summarize_failures
 from ..llm import DeepSeek
 from ..pipeline import Director
+from ..pipeline.subtitles import build_srt_text
 from ..providers.comfyui import ComfyUIProvider
 from ..schemas import Project, Shot
 from ..sysprobe import auto_configure, doctor_summary
 from ..utils import find_ffmpeg, probe_duration, read_json, recent_warnings, reap_orphans
+from ..vfpkg import MAX_UNCOMPRESSED, PackageError, export_project, import_package
 from . import security
 from .jobs import MANAGER, Job
 
@@ -896,6 +900,97 @@ def create_app() -> FastAPI:
         return {"slug": slug, "total": costs.get("total", 0.0), "budget": budget,
                 "by_provider": by_provider, "entries": costs.get("entries", []),
                 "summary": "\n".join(lines)}
+
+    # ---------------- 字幕表 / SRT ---------------- #
+    @app.get("/api/projects/{slug}/subtitles")
+    def get_subtitles(slug: str) -> Dict[str, Any]:
+        """全局字幕表：按成片时间轴摊平，空台词也占一行，方便在表里补写。"""
+        p = _load(slug)
+        rows, total = subtitle_rows(p.shots)
+        return {"slug": slug, "total": total, "rows": rows}
+
+    @app.post("/api/projects/{slug}/subtitles")
+    def save_subtitles(slug: str, payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """整表回写：只改 subtitle 字段，台词(dialogue)保持原样。"""
+        p = _load(slug)
+        items = payload.get("rows")
+        if not isinstance(items, list):
+            raise HTTPException(400, "rows 必须是数组")
+        if len(items) > 500:
+            raise HTTPException(400, "一次最多保存 500 行字幕")
+        by_id = {s.id: s for s in p.shots}
+        changed = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            shot = by_id.get(str(item.get("shot_id") or ""))
+            if shot is None:
+                continue
+            if "text" not in item:
+                continue
+            text = str(item.get("text") or "").replace("\r", "").strip()[:500]
+            if text != (shot.subtitle or ""):
+                shot.subtitle = text
+                changed += 1
+        if changed:
+            p.save()
+        rows, total = subtitle_rows(p.shots)
+        return {"ok": True, "changed": changed, "total": total, "rows": rows}
+
+    @app.get("/api/projects/{slug}/subtitles.srt")
+    def download_srt(slug: str) -> Response:
+        p = _load(slug)
+        rows, _ = subtitle_rows(p.shots)
+        text = build_srt_text(rows)
+        if not text.strip():
+            raise HTTPException(400, "这个项目还没有可导出的字幕（台词和字幕都是空的）")
+        # utf-8-sig：Windows 上不少播放器靠 BOM 判断编码
+        return Response(content=text.encode("utf-8-sig"),
+                        media_type="text/plain; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{slug}.srt"'})
+
+    # ---------------- 项目包 .vfpkg ---------------- #
+    @app.get("/api/projects/{slug}/package")
+    def export_package(slug: str, include_output: bool = False) -> FileResponse:
+        """打包当前项目（默认不含成片）。临时文件发出后自动删。"""
+        _guard_busy()
+        p = _load(slug)
+        tmp_dir = _projects_root() / ".tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        dest = tmp_dir / f"{slug}-{int(time.time() * 1000)}.vfpkg"
+        try:
+            export_project(p, dest, include_output=include_output)
+        except Exception:
+            dest.unlink(missing_ok=True)
+            raise
+        return FileResponse(str(dest), media_type="application/octet-stream",
+                            filename=f"{slug}.vfpkg",
+                            background=BackgroundTask(lambda: dest.unlink(missing_ok=True)))
+
+    @app.post("/api/projects/import-package")
+    async def import_package_route(request: Request, slug: str = "") -> Dict[str, Any]:
+        """导入 .vfpkg：新建一个项目，同名自动加后缀，绝不覆盖已有项目。"""
+        _guard_busy()
+        body = await request.body()
+        if len(body) < 128:
+            raise HTTPException(400, "文件是空的或不是项目包")
+        if len(body) > MAX_UNCOMPRESSED:
+            raise HTTPException(413, "项目包超过 8GB，先把素材单独拷过去更稳")
+        try:
+            p = import_package(body, _projects_root(), slug=slug or None)
+        except PackageError as exc:
+            raise HTTPException(400, str(exc))
+        except Exception as exc:                    # 损坏的 zip 走这里
+            raise HTTPException(400, f"导入失败：{type(exc).__name__}: {exc}")
+        return {"ok": True, "slug": p.dir.name, "project": _project_payload(p)}
+
+    # ---------------- 诊断包 ---------------- #
+    @app.get("/api/diagnostics/bundle")
+    def diagnostics_bundle() -> Response:
+        """排障用：系统信息 + 脱敏配置 + 项目统计 + 日志尾部。"""
+        data = bundle_bytes(settings=_settings(), projects_root=_projects_root())
+        return Response(content=data, media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="{diag_name()}"'})
 
     app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
     return app

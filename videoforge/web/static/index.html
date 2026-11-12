@@ -340,6 +340,20 @@ html.lang-ar .pill,html.lang-ar .chip,html.lang-ar .tl-block .cap b{ direction:l
 }
 .log-box .t{color:var(--dim)}
 
+/* ---------------- 字幕表 ---------------- */
+.sub-scroll{max-height:300px; overflow:auto; border:1px solid var(--line); border-radius:12px}
+.sub-table{width:100%; border-collapse:collapse; font-size:12px}
+.sub-table th{
+  position:sticky; top:0; z-index:1; text-align:left; font-weight:600; color:var(--muted);
+  font-size:11px; padding:8px 10px; background:rgba(9,20,38,.96);
+  border-bottom:1px solid var(--line); backdrop-filter:blur(6px);
+}
+.sub-table td{padding:6px 8px; border-bottom:1px dashed rgba(120,170,220,.12); vertical-align:middle}
+.sub-table tr:last-child td{border-bottom:0}
+.sub-table .nowrap{white-space:nowrap; color:var(--dim); font-size:11px}
+.sub-table input.input{padding:5px 8px; font-size:12px; min-width:140px}
+html.lang-ar .sub-table th, html.lang-ar .sub-table td{text-align:right}
+
 /* ---------------- 设置 ---------------- */
 .set-grid{display:grid; grid-template-columns:1fr 1fr; gap:14px}
 .prov{display:flex; gap:11px; align-items:flex-start; padding:13px; border-radius:13px;
