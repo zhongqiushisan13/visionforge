@@ -20,6 +20,7 @@ const S = {
   selected: null, job: null, jobSince: 0, poll: null, doctor: null,
   workflows: [], doctorLoading: false,
   filter: 'all', exporting: false,
+  seriesList: null, series: null, assetsSlug: '', assetKind: 'characters',
 };
 
 /* ------------------------------------------------------------------ */
@@ -185,6 +186,9 @@ function shotFieldsFromForm() {
     title_size: Number($('#dTitleSize')?.value || 0),
     video_prompt: $('#dVp')?.value || '',
     image_prompt: $('#dIp')?.value || '',
+    cast: $$('#inspector .preset.on[data-act="pick-cast"]').map(x => x.dataset.id),
+    scene_ref: $('#dSceneRef')?.value || '',
+    link_prev: $('#dLinkPrev')?.checked || false,
   };
 }
 
@@ -408,8 +412,19 @@ async function refreshProject(silent = true) {
 /* ------------------------------------------------------------------ */
 const VIEWS = {
   dashboard: renderDashboard, script: renderScript, storyboard: renderStoryboard,
-  timeline: renderTimeline, export: renderExport, settings: renderSettings,
+  timeline: renderTimeline, export: renderExport, assets: renderAssets,
+  settings: renderSettings,
 };
+
+/** 素材库是异步数据：进页面（或深链）时先拉一次再渲染 */
+async function enterAssets(slug) {
+  try {
+    await ensureSeries();
+    if (slug) await openSeries(slug);
+  } catch (e) { toast(e.message, 'err'); }
+  S.view = 'assets';
+  render();
+}
 
 function render() {
   $$('.nav-item').forEach(n => n.classList.toggle('on', n.dataset.view === S.view));
@@ -564,6 +579,16 @@ function renderScript() {
     </div>
     <div>
       <div class="panel" style="margin-bottom:14px">
+        <div class="panel-head">${icon('image')}<h3>${t('系列素材')}</h3>
+          <span class="sub">${p.series ? esc(p.series.title) : t('未绑定系列')}</span>
+          <div class="spacer"></div>
+          <button class="btn sm ghost" data-act="pick-series">${icon('edit')}${t('绑定系列')}</button>
+        </div>
+        ${p.series ? `<div class="hint">${t('角色')} ${(p.series.characters || []).length} · ${t('场景')} ${(p.series.scenes || []).length} · ${t('道具')} ${(p.series.props || []).length}</div>
+          <div class="hint" style="margin-top:4px">${t('同一系列的多集共用这套素材，换集不用重建')}</div>`
+          : `<div class="hint">${t('绑定后可以在分镜里选角、选场景，人物和空间才接得上')}</div>`}
+      </div>
+      <div class="panel" style="margin-bottom:14px">
         <div class="panel-head">${icon('list')}<h3>节拍</h3><span class="sub">${t('{n} 段', { n: (sc.beats || []).length })}</span></div>
         ${(sc.beats || []).map(b => `
           <div class="beat">
@@ -621,6 +646,10 @@ function renderStoryboard() {
             <span class="hint">${esc(s.camera || '')}</span>
           </div>
           <b>${esc(s.scene || s.description || '未命名镜头')}</b>
+          ${((s.cast || []).length || s.scene_ref) ? `<div class="hint">${esc([
+            (s.cast || []).map(id => (p.series?.characters || []).find(c => c.id === id)?.name).filter(Boolean).join(' · '),
+            (p.series?.scenes || []).find(x => x.id === s.scene_ref)?.name || '',
+          ].filter(Boolean).join(' ｜ '))}${s.link_prev ? ' ↳' : ''}</div>` : ''}
           <p>${esc(s.dialogue || '（无台词）')}</p>
           ${s.error ? `<p style="color:var(--danger)">${esc(s.error.slice(0, 90))}</p>` : ''}
         </div>
@@ -769,6 +798,25 @@ function inspectorHtml(s, p) {
       </select></div>
       <div class="field"><label>字号（0=自动）</label><input class="input" id="dTitleSize" type="number" min="0" max="160" value="${s.title_size || 0}"></div>
     </div>
+
+    <div class="sec-title">${t('连续性与素材')}</div>
+    ${p.series ? `
+      <div class="field"><label>${t('参演角色')}</label>
+        <div class="preset-row">
+          ${(p.series.characters || []).length
+            ? (p.series.characters || []).map(c =>
+                `<span class="preset ${(s.cast || []).includes(c.id) ? 'on' : ''}"
+                   data-act="pick-cast" data-id="${esc(c.id)}">${esc(c.name)}</span>`).join('')
+            : `<span class="hint">${t('素材库里还没有角色')}</span>`}
+        </div></div>
+      <div class="field"><label>${t('场景引用')}</label>
+        <select class="select" id="dSceneRef">
+          <option value="">${t('不指定')}</option>
+          ${(p.series.scenes || []).map(x =>
+            `<option value="${esc(x.id)}" ${s.scene_ref === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}
+        </select></div>
+      <label class="chk" style="margin:6px 0 10px"><input type="checkbox" id="dLinkPrev" ${s.link_prev ? 'checked' : ''}> ${t('接上一镜末帧')}</label>
+    ` : `<div class="hint">${t('还没绑定系列，去「素材库」建一个再回来选角')}</div>`}
 
     <div class="sec-title">声音与字幕</div>
     ${slider('dVol', '音量', 0, 2, 0.05, Number(s.volume ?? 1), '', 2)}
@@ -987,6 +1035,161 @@ function bindExport() {
     } catch (e) { toast(e.message, 'err'); }
   });
 }
+
+/* ------------------------------------------------------------------ */
+/* 素材库                                                              */
+/* ------------------------------------------------------------------ */
+async function ensureSeries(force = false) {
+  if (!force && S.seriesList) return S.seriesList;
+  const r = await api('/api/series');
+  S.seriesList = r.series || [];
+  return S.seriesList;
+}
+
+async function openSeries(slug) {
+  S.series = await api(`/api/series/${encodeURIComponent(slug)}`);
+  S.assetsSlug = slug;
+  return S.series;
+}
+
+function seriesAssetUrl(rel) {
+  if (!rel || !S.series) return '';
+  return `/series-assets/${encodeURIComponent(S.series.slug)}/${rel}?v=${Date.now() % 100000}`;
+}
+
+function renderAssets() {
+  if (S.series && S.assetsSlug) return renderSeriesDetail();
+  const list = S.seriesList || [];
+  return `
+  <div class="toolbar">
+    <button class="btn sm primary" data-act="new-series">${icon('plus')}${t('新建系列')}</button>
+    <div class="spacer"></div>
+    <span class="hint">${t('系列里的角色和场景，所有集共用')}</span>
+  </div>
+  ${list.length ? `<div class="asset-grid">${list.map(s => `
+    <div class="panel asset-series" data-act="open-series" data-slug="${esc(s.slug)}">
+      <div class="panel-head">${icon('image')}<h3>${esc(s.title)}</h3></div>
+      <div class="hint">${t('角色')} ${s.characters} · ${t('场景')} ${s.scenes} · ${t('道具')} ${s.props}</div>
+      <div class="hint" style="margin-top:6px">${esc((s.style_prompt || '').slice(0, 70)) || '—'}</div>
+    </div>`).join('')}</div>`
+    : `<div class="panel"><div class="empty-state">${icon('image')}<b>${t('没有系列')}</b>
+        <p>${t('先建一个系列，再往里放角色和场景')}</p>
+        <button class="btn primary" data-act="new-series">${icon('plus')}${t('新建系列')}</button></div></div>`}`;
+}
+
+function renderSeriesDetail() {
+  const s = S.series;
+  const kind = S.assetKind || 'characters';
+  const items = s[kind] || [];
+  const tabs = [['characters', '角色'], ['scenes', '场景'], ['props', '道具']];
+  return `
+  <div class="toolbar">
+    <button class="btn sm ghost" data-act="back-series">${icon('back')}${t('返回')}</button>
+    <b style="font-size:14px">${esc(s.title)}</b>
+    <span class="hint">${t('风格')}：${esc((s.style_prompt || '').slice(0, 50)) || '—'}</span>
+    <div class="spacer"></div>
+    <button class="btn sm ghost" data-act="edit-series">${icon('edit')}${t('编辑系列')}</button>
+    <button class="btn sm primary" data-act="new-asset" data-kind="${kind}">${icon('plus')}${t('新建素材')}</button>
+  </div>
+  <div class="preset-row" style="margin-bottom:12px">
+    ${tabs.map(([k, label]) => `<span class="preset ${kind === k ? 'on' : ''}"
+      data-act="asset-tab" data-kind="${k}">${t(label)} ${ (s[k] || []).length }</span>`).join('')}
+  </div>
+  ${items.length ? `<div class="asset-grid">${items.map(a => {
+    const main = (a.images || {}).main || (a.images || {}).wide || '';
+    return `<div class="asset-card">
+      <div class="asset-thumb">${main ? `<img src="${seriesAssetUrl(main)}" loading="lazy">`
+        : `<div class="none">${icon('image')}</div>`}</div>
+      <div class="asset-body">
+        <b>${esc(a.name)}</b>
+        <div class="hint">${esc((a.look_en || a.desc_en || '').slice(0, 80)) || '—'}</div>
+        ${a.seed ? `<div class="hint mono">seed ${a.seed}</div>` : ''}
+      </div>
+      <div class="asset-acts">
+        <label class="btn sm ghost" style="margin:0">${icon('upload')}${t('上传图片')}
+          <input type="file" accept="image/*" hidden class="asset-file"
+                 data-kind="${kind}" data-id="${esc(a.id)}"></label>
+        <button class="btn sm ghost" data-act="asset-gen" data-kind="${kind}" data-id="${esc(a.id)}">${icon('sparkle')}${t('AI 生成')}</button>
+        <button class="btn sm ghost" data-act="asset-edit" data-kind="${kind}" data-id="${esc(a.id)}">${icon('edit')}</button>
+        <button class="btn sm danger" data-act="asset-del" data-kind="${kind}" data-id="${esc(a.id)}">${icon('trash')}</button>
+      </div>
+    </div>`;
+  }).join('')}</div>`
+    : `<div class="panel"><div class="empty-state">${icon('image')}<b>${t('素材库为空')}</b>
+        <p>${t('先建角色/场景，再上传定妆图或让 AI 出图')}</p></div></div>`}`;
+}
+
+function seriesModal() {
+  openModal(`
+    <div class="modal-head">${icon('image')}<h2>${t('新建系列')}</h2>
+      <button class="icon-btn close" data-act="close-modal">${icon('close')}</button></div>
+    <div class="field"><label>${t('名字')}</label><input class="input" id="seTitle" placeholder="${t('例：雨夜短剧 第一季')}"></div>
+    <div class="field"><label>${t('风格词')}</label>
+      <textarea class="textarea mono" id="seStyle" rows="2" placeholder="cinematic still, 35mm, teal-orange grade"></textarea></div>
+    <div class="field"><label>${t('负向词')}</label>
+      <textarea class="textarea mono" id="seNeg" rows="2" placeholder="text, watermark, extra fingers"></textarea></div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-act="close-modal">${t('取消')}</button>
+      <button class="btn primary" data-act="create-series">${icon('plus')}${t('创建')}</button>
+    </div>`, 'sm');
+}
+
+function editSeriesModal() {
+  const s = S.series;
+  openModal(`
+    <div class="modal-head">${icon('edit')}<h2>${t('编辑系列')}</h2>
+      <button class="icon-btn close" data-act="close-modal">${icon('close')}</button></div>
+    <div class="field"><label>${t('名字')}</label><input class="input" id="seTitle" value="${esc(s.title)}"></div>
+    <div class="field"><label>${t('风格词')}</label>
+      <textarea class="textarea mono" id="seStyle" rows="2">${esc(s.style_prompt || '')}</textarea></div>
+    <div class="field"><label>${t('负向词')}</label>
+      <textarea class="textarea mono" id="seNeg" rows="2">${esc(s.negative_prompt || '')}</textarea></div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-act="close-modal">${t('取消')}</button>
+      <button class="btn primary" data-act="save-series">${icon('save')}${t('保存')}</button>
+    </div>`, 'sm');
+}
+
+function assetModal(kind, asset) {
+  const isChar = kind === 'characters';
+  openModal(`
+    <div class="modal-head">${icon('image')}<h2>${t(asset ? '编辑素材' : '新建素材')}</h2>
+      <button class="icon-btn close" data-act="close-modal">${icon('close')}</button></div>
+    <div class="field"><label>${t('名字')}</label>
+      <input class="input" id="asName" value="${esc(asset?.name || '')}" placeholder="${isChar ? t('例：林夏') : t('例：出租屋客厅')}"></div>
+    <div class="field"><label>${t('英文描述（喂给模型）')}</label>
+      <textarea class="textarea mono" id="asLook" rows="3">${esc(asset?.look_en || asset?.desc_en || '')}</textarea></div>
+    ${isChar ? `<div class="field"><label>seed（固定下来更稳）</label>
+      <input class="input" id="asSeed" type="number" value="${asset?.seed || 0}"></div>` : ''}
+    <div class="field"><label>${t('来源')}</label>
+      <select class="select" id="asSource">
+        ${[['ai', 'AI 生成'], ['upload', '本地上传'], ['stock', '公共素材']].map(([v, n]) =>
+          `<option value="${v}" ${(asset?.source || 'ai') === v ? 'selected' : ''}>${t(n)}</option>`).join('')}
+      </select></div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-act="close-modal">${t('取消')}</button>
+      <button class="btn primary" data-act="save-asset" data-kind="${kind}" data-id="${esc(asset?.id || '')}">${icon('save')}${t('保存')}</button>
+    </div>`, 'sm');
+}
+
+function pickSeriesModal() {
+  const list = S.seriesList || [];
+  const cur = S.project?.series?.slug || '';
+  openModal(`
+    <div class="modal-head">${icon('image')}<h2>${t('绑定系列')}</h2>
+      <button class="icon-btn close" data-act="close-modal">${icon('close')}</button></div>
+    <div class="field"><label>${t('系列')}</label>
+      <select class="select" id="bindSeries">
+        <option value="">${t('不绑定')}</option>
+        ${list.map(s => `<option value="${esc(s.slug)}" ${cur === s.slug ? 'selected' : ''}>${esc(s.title)}</option>`).join('')}
+      </select>
+      <div class="hint" style="margin-top:6px">${t('绑定后可在分镜里选角、选场景；换集沿用同一套素材')}</div></div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-act="close-modal">${t('取消')}</button>
+      <button class="btn primary" data-act="do-bind-series">${icon('check')}${t('绑定')}</button>
+    </div>`, 'sm');
+}
+
 
 /* ------------------------------------------------------------------ */
 /* 设置                                                                */
@@ -1331,6 +1534,7 @@ function previewModal(sid) {
 const JOB_LABEL = {
   plan: 'DeepSeek 正在写剧本与分镜', render: '全量渲染', all: '一键成片',
   voice: '生成配音', keyframes: '渲染关键帧', clips: '生成镜头', assemble: '剪辑合成', revise: '重拍镜头',
+  asset: '生成素材图',
 };
 
 function showJob(jobId, title) {
@@ -1374,6 +1578,12 @@ async function pollJob(jobId) {
           await boot();
           await openProject(j.result.slug);
           S.view = 'storyboard'; render();
+        } else if (j.kind === 'asset' && S.series) {
+          try {
+            await openSeries(S.series.slug);
+            await ensureSeries(true);
+            render();
+          } catch (e) { /* 系列可能被删了 */ }
         } else {
           await refreshProject();
           render();
@@ -1410,7 +1620,12 @@ async function doAction(action, force = false) {
 
 document.addEventListener('click', async e => {
   const nav = e.target.closest('.nav-item');
-  if (nav) { S.view = nav.dataset.view; render(); return; }
+  if (nav) {
+    S.view = nav.dataset.view;
+    if (S.view === 'assets') { await enterAssets(S.assetsSlug || ''); return; }
+    render();
+    return;
+  }
 
   const el = e.target.closest('[data-act]');
   if (!el) return;
@@ -1448,6 +1663,123 @@ document.addEventListener('click', async e => {
     };
     closeModal();
     await submitJob('/api/projects', payload, 'DeepSeek 正在写剧本');
+    return;
+  }
+
+  /* ---- 素材库 ---- */
+  if (act === 'new-series') { seriesModal(); return; }
+  if (act === 'create-series') {
+    const title = $('#seTitle').value.trim();
+    if (!title) return toast(t('名字不能为空'), 'warn');
+    try {
+      const s = await api('/api/series', { method: 'POST', body: {
+        title, style_prompt: $('#seStyle').value.trim(), negative_prompt: $('#seNeg').value.trim(),
+      }});
+      closeModal();
+      await ensureSeries(true);
+      await openSeries(s.slug);
+      S.view = 'assets';
+      render();
+      toast(t('系列已创建'));
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'open-series') {
+    try { await openSeries(el.dataset.slug); S.view = 'assets'; render(); }
+    catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'back-series') {
+    S.series = null; S.assetsSlug = '';
+    await ensureSeries(true).catch(() => {});
+    render();
+    return;
+  }
+  if (act === 'asset-tab') { S.assetKind = el.dataset.kind; render(); return; }
+  if (act === 'edit-series') { editSeriesModal(); return; }
+  if (act === 'save-series') {
+    try {
+      await api(`/api/series/${S.series.slug}`, { method: 'PATCH', body: {
+        title: $('#seTitle').value.trim() || S.series.title,
+        style_prompt: $('#seStyle').value.trim(),
+        negative_prompt: $('#seNeg').value.trim(),
+      }});
+      closeModal();
+      await openSeries(S.series.slug);
+      await ensureSeries(true);
+      render();
+      toast(t('已保存'));
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'new-asset') { assetModal(el.dataset.kind || S.assetKind, null); return; }
+  if (act === 'asset-edit') {
+    const kind = el.dataset.kind;
+    const asset = (S.series?.[kind] || []).find(a => a.id === el.dataset.id);
+    if (asset) assetModal(kind, asset);
+    return;
+  }
+  if (act === 'save-asset') {
+    const kind = el.dataset.kind, id = el.dataset.id;
+    const isChar = kind === 'characters';
+    const body = {
+      name: $('#asName').value.trim(),
+      [isChar ? 'look_en' : 'desc_en']: $('#asLook').value.trim(),
+      source: $('#asSource').value,
+    };
+    if (isChar) body.seed = Number($('#asSeed')?.value || 0);
+    try {
+      if (id) await api(`/api/series/${S.series.slug}/${kind}/${id}`, { method: 'PATCH', body });
+      else await api(`/api/series/${S.series.slug}/${kind}`, { method: 'POST', body });
+      closeModal();
+      await openSeries(S.series.slug);
+      await ensureSeries(true);
+      render();
+      toast(t('已保存'));
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'asset-del') {
+    if (!confirm(t('删掉这个素材？图也会一起删。'))) return;
+    try {
+      await api(`/api/series/${S.series.slug}/${el.dataset.kind}/${el.dataset.id}`, { method: 'DELETE' });
+      await openSeries(S.series.slug);
+      await ensureSeries(true);
+      render();
+      toast(t('已删除'));
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'asset-gen') {
+    try {
+      const r = await api(`/api/series/${S.series.slug}/${el.dataset.kind}/${el.dataset.id}/generate`,
+        { method: 'POST', body: {} });
+      showJob(r.job, t('生成素材图'));
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'pick-series') {
+    try { await ensureSeries(true); pickSeriesModal(); }
+    catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'do-bind-series') {
+    try {
+      S.project = await api(`/api/projects/${S.project.slug}/series`,
+        { method: 'POST', body: { series_id: $('#bindSeries').value } });
+      closeModal();
+      render();
+      toast(t('已绑定'));
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'pick-cast') {
+    el.classList.toggle('on');
+    const sid = $('#inspector')?.dataset.shot;
+    if (!sid) return;
+    if (!AUTO.dirty) snapshotShots();
+    try { await saveShotFields(sid, true); AUTO.dirty = false; }
+    catch (err) { toast(err.message, 'err'); }
     return;
   }
 
@@ -1753,6 +2085,29 @@ document.addEventListener('click', async e => {
 document.addEventListener('change', async e => {
   if (e.target.id === 'projectSelect') {
     await openProject(e.target.value);
+    return;
+  }
+  if (e.target.classList?.contains('asset-file')) {
+    const file = e.target.files?.[0];
+    if (!file || !S.series) return;
+    const { kind, id } = e.target.dataset;
+    toast(t('正在上传图片…'), 'warn', 2000);
+    try {
+      const res = await fetch(`/api/series/${S.series.slug}/${kind}/${id}/image`
+        + `?role=main&filename=${encodeURIComponent(file.name)}`,
+        { method: 'POST', body: file, headers: authHeaders() });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.detail || res.statusText);
+      }
+      await openSeries(S.series.slug);
+      render();
+      toast(t('图片已更新'));
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      e.target.value = '';
+    }
   }
 });
 
@@ -1773,11 +2128,13 @@ document.addEventListener('keydown', e => {
     await boot();
     S.settings = await api('/api/settings');
     S.workflows = (await api('/api/workflows')).files || [];
-    // 支持 #settings / #timeline 这类深链，方便截图与排错
+    // 支持 #settings / #timeline / #assets/<slug> 这类深链，方便截图与排错
     const hash = (location.hash || '').replace('#', '');
-    if (VIEWS[hash]) {
-      S.view = hash;
-      render();
+    const [hashView, hashArg] = hash.split('/');
+    if (VIEWS[hashView]) {
+      S.view = hashView;
+      if (hashView === 'assets') await enterAssets(hashArg || '');
+      else render();
     } else if (S.view === 'settings') {
       render();
     }

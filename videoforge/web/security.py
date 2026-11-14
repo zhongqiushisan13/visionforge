@@ -121,7 +121,7 @@ class GuardMiddleware(BaseHTTPMiddleware):
                 tok = _extract_token(request.headers)
                 if not tok or not secrets.compare_digest(tok, self.token):
                     return JSONResponse({"detail": "缺少或错误的 X-VF-Token"}, status_code=401)
-            elif path.startswith("/media/"):
+            elif path.startswith("/media/") or path.startswith("/series-assets/"):
                 # <video>/<img> 不能带自定义头；同源页面由 index 种 SameSite=Strict Cookie。
                 tok = request.cookies.get(TOKEN_COOKIE, "") or request.query_params.get("token", "")
                 if not tok or not secrets.compare_digest(tok, self.token):

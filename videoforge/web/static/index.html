@@ -354,6 +354,23 @@ html.lang-ar .pill,html.lang-ar .chip,html.lang-ar .tl-block .cap b{ direction:l
 .sub-table input.input{padding:5px 8px; font-size:12px; min-width:140px}
 html.lang-ar .sub-table th, html.lang-ar .sub-table td{text-align:right}
 
+/* ---------------- 素材库 ---------------- */
+.asset-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(238px,1fr)); gap:12px}
+.asset-card{
+  display:flex; flex-direction:column; overflow:hidden; border-radius:14px;
+  border:1px solid var(--line); background:rgba(8,19,36,.5);
+}
+.asset-thumb{aspect-ratio:16/10; display:grid; place-items:center; overflow:hidden;
+  background:rgba(3,10,20,.8); color:#26405f}
+.asset-thumb img{width:100%; height:100%; object-fit:cover; display:block}
+.asset-thumb .none svg{width:26px; height:26px}
+.asset-body{padding:10px 12px 6px; display:flex; flex-direction:column; gap:3px; min-width:0}
+.asset-body b{font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.asset-acts{display:flex; gap:6px; flex-wrap:wrap; padding:6px 12px 12px}
+.asset-acts .btn{padding:4px 8px; font-size:11.5px}
+.asset-series{cursor:pointer; transition:border-color .15s ease}
+.asset-series:hover{border-color:rgba(77,163,255,.4)}
+
 /* ---------------- 设置 ---------------- */
 .set-grid{display:grid; grid-template-columns:1fr 1fr; gap:14px}
 .prov{display:flex; gap:11px; align-items:flex-start; padding:13px; border-radius:13px;
@@ -463,6 +480,7 @@ html.lang-ar .sub-table th, html.lang-ar .sub-table td{text-align:right}
 <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
 <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4.5h11l3 3v12H5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8.5 4.5v5h7v-5M8.5 19.5v-5h7v5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
 <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 20V9m0 0 3.8 3.8M12 9 8.2 12.8M5 5h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5m0 0 6-6m-6 6 6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
 <symbol id="i-scissors" viewBox="0 0 24 24"><circle cx="6.5" cy="7" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="6.5" cy="17" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m8.8 8.6 9.7 7.6M8.8 15.4 18.5 7.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
 <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.8 12S6 6.5 12 6.5 21.2 12 21.2 12 18 17.5 12 17.5 2.8 12 2.8 12z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
 <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5.5 11 6.5-11 6.5z" fill="currentColor"/></symbol>
@@ -488,6 +506,7 @@ html.lang-ar .sub-table th, html.lang-ar .sub-table td{text-align:right}
       <div class="nav-item" data-view="script"><svg><use href="#i-book"></use></svg>剧本</div>
       <div class="nav-item" data-view="storyboard"><svg><use href="#i-layers"></use></svg>分镜<span class="badge" id="navShots">0</span></div>
       <div class="nav-item" data-view="timeline"><svg><use href="#i-timeline"></use></svg>手动剪辑</div>
+      <div class="nav-item" data-view="assets"><svg><use href="#i-image"></use></svg>素材库</div>
       <div class="nav-item" data-view="export"><svg><use href="#i-film"></use></svg>成片</div>
       <div class="nav-item" data-view="settings"><svg><use href="#i-sliders"></use></svg>设置</div>
     </nav>

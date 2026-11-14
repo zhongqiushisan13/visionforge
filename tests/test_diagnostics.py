@@ -7,6 +7,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
+from videoforge import __version__
 from videoforge import diagnostics as D
 from videoforge.config import Settings
 
@@ -75,6 +76,7 @@ class TestBundle(unittest.TestCase):
         files, _ = self._bundle()
         for name in ("meta.json", "settings.json", "doctor.json", "projects.json", "README.txt"):
             self.assertIn(name, files)
+        self.assertEqual(json.loads(files["meta.json"])["version"], __version__)
 
     def test_no_secret_leaks(self):
         _, blob = self._bundle()

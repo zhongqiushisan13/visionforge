@@ -87,6 +87,10 @@ class Shot:
     title_text: str = ""                # 画面上叠加的文字层
     title_position: str = "bottom"      # top / center / bottom
     title_size: int = 0                 # 0 = 按分辨率自动
+    # ---- 连续性 / 素材库 ----
+    cast: List[str] = field(default_factory=list)   # 参演角色 id（series.characters）
+    scene_ref: str = ""                 # 场景 id（series.scenes）
+    link_prev: bool = False             # 接上一镜末帧（动作连续）
     status: str = "pending"
     provider: str = ""
     task_id: str = ""
@@ -186,6 +190,7 @@ class Project:
     slug: str = ""
     title: str = ""
     brief: str = ""
+    series_id: str = ""                 # 所属系列（素材库挂在系列层）
     aspect: str = "16:9"
     resolution: str = "1920x1080"
     fps: int = 30
@@ -236,6 +241,7 @@ class Project:
             slug=_s(data.get("slug")),
             title=_s(data.get("title")),
             brief=_s(data.get("brief")),
+            series_id=_s(data.get("series_id")),
             aspect=_s(data.get("aspect"), "16:9"),
             resolution=_s(data.get("resolution"), "1920x1080"),
             fps=_i(data.get("fps"), 30),

@@ -30,6 +30,9 @@ from ..pipeline import Director
 from ..pipeline.subtitles import build_srt_text
 from ..providers.comfyui import ComfyUIProvider
 from ..schemas import Project, Shot
+from ..series import (KINDS, add_asset, asset_path, compose_prompt, create_series,
+                      delete_asset, list_series, load_series, save_series,
+                      series_dir, set_asset_image, update_asset)
 from ..sysprobe import auto_configure, doctor_summary
 from ..utils import find_ffmpeg, probe_duration, read_json, recent_warnings, reap_orphans
 from ..vfpkg import MAX_UNCOMPRESSED, PackageError, export_project, import_package
@@ -57,6 +60,8 @@ EDITABLE_SHOT_FIELDS = {
     "filter_preset": str, "brightness": float, "contrast": float,
     "saturation": float, "temperature": float, "transition_duration": float,
     "title_text": str, "title_position": str, "title_size": int,
+    # 连续性
+    "scene_ref": str, "link_prev": bool,
 }
 
 
@@ -118,6 +123,7 @@ def _project_payload(p: Project) -> Dict[str, Any]:
     d["counts"] = p.counts()
     d["costs"] = p.meta.get("costs") or {"total": 0.0, "entries": []}
     d["failures"] = summarize_failures(p.shots)
+    d["series"] = _series_brief(p.series_id)
     enabled = [s for s in p.shots if s.enabled]
     starts, total = timeline(enabled, 0.4)
     d["timeline"] = {"ids": [s.id for s in enabled], "starts": starts, "total": total}
@@ -137,6 +143,23 @@ def _summary(p: Project) -> Dict[str, Any]:
                            for s in p.shots if s.keyframe), ""),
         "mock": p.mock, "aspect": p.aspect,
     }
+
+
+def _series_brief(slug: str) -> Optional[Dict[str, Any]]:
+    """给项目详情附一份系列素材清单，够前端下拉选角就行，不带图。"""
+    if not slug:
+        return None
+    try:
+        s = load_series(slug)
+    except (FileNotFoundError, OSError, ValueError):
+        return None
+    brief: Dict[str, Any] = {"slug": s["slug"], "title": s.get("title") or s["slug"]}
+    for kind in KINDS:
+        brief[kind] = [{"id": a.get("id"), "name": a.get("name"),
+                        "main": ((a.get("images") or {}).get("main")
+                                 or (a.get("images") or {}).get("wide") or "")}
+                       for a in (s.get(kind) or [])]
+    return brief
 
 
 def _write_env(updates: Dict[str, str]) -> None:
@@ -480,6 +503,139 @@ def create_app() -> FastAPI:
             _merge_config("pipeline", {k: pipe[k] for k in ("mock", "max_workers", "budget") if k in pipe})
         return {"ok": True, "settings": get_settings()}
 
+    # ---------------- 系列 / 素材库 ---------------- #
+    @app.get("/api/series")
+    def series_index() -> Dict[str, Any]:
+        return {"series": list_series()}
+
+    @app.post("/api/series")
+    def series_create(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        title = str(payload.get("title") or "").strip()
+        if not title:
+            raise HTTPException(400, "系列名不能为空")
+        return create_series(title, style_prompt=str(payload.get("style_prompt") or ""),
+                             negative_prompt=str(payload.get("negative_prompt") or ""))
+
+    @app.get("/api/series/{slug}")
+    def series_detail(slug: str) -> Dict[str, Any]:
+        try:
+            return load_series(slug)
+        except FileNotFoundError:
+            raise HTTPException(404, f"系列不存在：{slug}")
+
+    @app.patch("/api/series/{slug}")
+    def series_patch(slug: str, payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        try:
+            data = load_series(slug)
+        except FileNotFoundError:
+            raise HTTPException(404, f"系列不存在：{slug}")
+        for key in ("title", "style_prompt", "negative_prompt"):
+            if key in payload:
+                data[key] = str(payload[key])
+        return save_series(data)
+
+    @app.post("/api/series/{slug}/{kind}")
+    def series_add_asset(slug: str, kind: str, payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        if kind not in KINDS:
+            raise HTTPException(404, f"未知素材类型：{kind}")
+        try:
+            load_series(slug)
+        except FileNotFoundError:
+            raise HTTPException(404, f"系列不存在：{slug}")
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise HTTPException(400, "名字不能为空")
+        try:
+            return add_asset(slug, kind, name,
+                             look_en=str(payload.get("look_en") or ""),
+                             desc_en=str(payload.get("desc_en") or ""),
+                             asset_id=str(payload.get("id") or ""),
+                             seed=int(payload.get("seed") or 0))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+    @app.patch("/api/series/{slug}/{kind}/{aid}")
+    def series_patch_asset(slug: str, kind: str, aid: str,
+                           payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        if kind not in KINDS:
+            raise HTTPException(404, "未知素材类型")
+        try:
+            return update_asset(slug, kind, aid, payload)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.delete("/api/series/{slug}/{kind}/{aid}")
+    def series_delete_asset(slug: str, kind: str, aid: str) -> Dict[str, Any]:
+        if kind not in KINDS:
+            raise HTTPException(404, "未知素材类型")
+        try:
+            delete_asset(slug, kind, aid)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc))
+        return {"ok": True}
+
+    @app.post("/api/series/{slug}/{kind}/{aid}/image")
+    async def series_upload_image(slug: str, kind: str, aid: str, request: Request,
+                                  role: str = "main", filename: str = "main.png") -> Dict[str, Any]:
+        body = await request.body()
+        if len(body) < 512:
+            raise HTTPException(400, "图片是空的")
+        if len(body) > 20 * 1024 * 1024:
+            raise HTTPException(413, "单张图不要超过 20MB")
+        suffix = Path(filename).suffix.lower() or ".png"
+        try:
+            rel = set_asset_image(slug, kind, aid, role, body, suffix)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc))
+        return {"ok": True, "path": rel, "url": f"/series-assets/{slug}/{rel}"}
+
+    @app.post("/api/series/{slug}/{kind}/{aid}/generate")
+    def series_generate_image(slug: str, kind: str, aid: str,
+                              payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
+        """用本机 ComfyUI 出一张素材图（定妆 / 场景全景 / 道具特写）。"""
+        _guard_busy()
+        try:
+            data = load_series(slug)
+        except FileNotFoundError:
+            raise HTTPException(404, f"系列不存在：{slug}")
+        asset = next((a for a in data.get(kind) or [] if a.get("id") == aid), None)
+        if not asset:
+            raise HTTPException(404, "素材不存在")
+        role = str(payload.get("role") or ("wide" if kind == "scenes" else "main"))
+        seed = int(payload.get("seed") or asset.get("seed") or 0)
+
+        def run(job: Job) -> Dict[str, Any]:
+            s = _settings()
+            prompt = (asset.get("look_en") or asset.get("desc_en") or asset.get("name") or "").strip()
+            style = (data.get("style_prompt") or "").strip()
+            full = ", ".join(x for x in (prompt, style) if x)
+            shot = Shot(id=f"asset-{aid}", image_prompt=full,
+                        negative_prompt=data.get("negative_prompt") or "", seed=seed)
+            tmp = _projects_root().parent / "cache" / f"{slug}-{kind}-{aid}-{role}.png"
+            comfy = ComfyUIProvider(s)
+            result = comfy.generate_keyframe(shot, tmp)
+            if not result.ok:
+                raise RuntimeError("ComfyUI 没有产出图片，检查工作流与提示词")
+            rel = set_asset_image(slug, kind, aid, role, Path(result.path).read_bytes(), ".png")
+            tmp.unlink(missing_ok=True)
+            return {"path": rel, "url": f"/series-assets/{slug}/{rel}", "seed": result.seed}
+
+        job = MANAGER.submit("asset", run)
+        return {"job": job.id}
+
+    @app.post("/api/projects/{slug}/series")
+    def bind_series(slug: str, payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        p = _load(slug)
+        sid = str(payload.get("series_id") or "").strip()
+        if sid:
+            try:
+                load_series(sid)
+            except FileNotFoundError:
+                raise HTTPException(404, f"系列不存在：{sid}")
+        p.series_id = sid
+        p.save()
+        return _project_payload(p)
+
     # ---------------- 项目 ---------------- #
     @app.get("/api/projects")
     def list_projects() -> List[Dict[str, Any]]:
@@ -588,6 +744,14 @@ def create_app() -> FastAPI:
         shot = p.shot(sid)
         if not shot:
             raise HTTPException(404, f"镜头不存在：{sid}")
+        if "cast" in payload:
+            raw = payload.get("cast")
+            if isinstance(raw, list):
+                shot.cast = [str(x)[:40] for x in raw if str(x).strip()][:8]
+            elif isinstance(raw, str):
+                shot.cast = [x.strip()[:40] for x in raw.split(",") if x.strip()][:8]
+            else:
+                shot.cast = []
         for key, val in payload.items():
             if key not in EDITABLE_SHOT_FIELDS:
                 continue
@@ -872,6 +1036,14 @@ def create_app() -> FastAPI:
         return {"markdown": md.read_text(encoding="utf-8") if md.exists() else ""}
 
     # ---------------- 媒体 ---------------- #
+    @app.get("/series-assets/{slug}/{path:path}")
+    def series_asset(slug: str, path: str) -> FileResponse:
+        base = series_dir(slug).resolve()
+        target = (base / path).resolve()
+        if not str(target).startswith(str(base)) or not target.exists() or target.is_dir():
+            raise HTTPException(404, "文件不存在")
+        return FileResponse(str(target), headers={"Cache-Control": "no-cache"})
+
     @app.get("/media/{slug}/{path:path}")
     def media(slug: str, path: str) -> FileResponse:
         base = _project_dir(slug).resolve()

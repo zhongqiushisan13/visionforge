@@ -15,8 +15,12 @@ os.environ["VF_NO_CHILD_REGISTRY"] = "1"
 from fastapi.testclient import TestClient  # noqa: E402
 
 import videoforge.web.server as srv  # noqa: E402
+import videoforge.series as series_mod  # noqa: E402
+from videoforge import __version__  # noqa: E402
 from videoforge.schemas import Project, Shot  # noqa: E402
 from videoforge.web import security  # noqa: E402
+
+series_mod.series_root = lambda: Path(TMP) / "series"
 
 TOKEN = security.token_path().read_text(encoding="utf-8").strip() \
     if security.token_path().exists() else "test-token"
@@ -80,12 +84,49 @@ class TestApi(unittest.TestCase):
             names = set(zf.namelist())
             self.assertIn("meta.json", names)
             meta = json.loads(zf.read("meta.json"))
-        self.assertEqual(meta["version"], "1.4.0")
+        self.assertEqual(meta["version"], __version__)
 
     def test_subtitle_validation(self):
         c = self.client()
         r = c.post(f"/api/projects/{SLUG}/subtitles", headers=HEADERS, json={"rows": "nope"})
         self.assertEqual(r.status_code, 400)
+
+
+class TestSeriesApi(unittest.TestCase):
+    def test_series_crud_asset_and_bind(self):
+        c = TestClient(srv.app, base_url="http://127.0.0.1")
+        r = c.post("/api/series", headers=HEADERS, json={"title": "接口系列", "style_prompt": "teal"})
+        self.assertEqual(r.status_code, 200, r.text)
+        slug = r.json()["slug"]
+
+        r = c.post(f"/api/series/{slug}/characters", headers=HEADERS,
+                   json={"name": "林夏", "look_en": "short black hair"})
+        self.assertEqual(r.status_code, 200, r.text)
+        aid = r.json()["id"]
+
+        r = c.post(f"/api/series/{slug}/characters/{aid}/image?role=main&filename=a.png",
+                   headers=HEADERS, content=b"x" * 4096)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertTrue(r.json()["path"].startswith("characters/"))
+
+        r = c.get(f"/api/series/{slug}", headers=HEADERS)
+        self.assertEqual(r.json()["characters"][0]["images"]["main"], r.json()["characters"][0]["images"]["main"])
+
+        r = c.post(f"/api/projects/{SLUG}/series", headers=HEADERS, json={"series_id": slug})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["series"]["slug"], slug)
+        self.assertEqual(r.json()["series"]["characters"][0]["id"], aid)
+
+        r = c.patch(f"/api/projects/{SLUG}/shots/S01", headers=HEADERS,
+                    json={"cast": [aid], "link_prev": True, "scene_ref": ""})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["shot"]["cast"], [aid])
+        self.assertTrue(r.json()["shot"]["link_prev"])
+
+    def test_unknown_series_404(self):
+        c = TestClient(srv.app, base_url="http://127.0.0.1")
+        r = c.post(f"/api/projects/{SLUG}/series", headers=HEADERS, json={"series_id": "nope"})
+        self.assertEqual(r.status_code, 404)
 
 
 if __name__ == "__main__":

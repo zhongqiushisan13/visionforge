@@ -12,12 +12,14 @@ import math
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from ..config import Settings
 from ..providers import Providers, ProviderError
 from ..schemas import Project, Shot
+from ..series import compose_prompt, extract_last_frame, load_series
 from ..utils import Timer, ensure_dir, human_time, log, now_iso, warn
 from .editor import Editor
 from .writer import Screenwriter
@@ -214,9 +216,22 @@ class Director:
         if not targets:
             return {"ok": 0, "fail": 0}
 
+        series = None
+        if project.series_id:
+            try:
+                series = load_series(project.series_id)
+            except Exception as exc:
+                warn(f"系列 {project.series_id} 读不出来，退回纯文字出图：{exc}")
+
         def work(shot: Shot) -> None:
             out = project.path("keyframes") / f"{shot.id}.png"
-            result = self.providers.keyframe(shot, out)
+            gen_shot = shot
+            if series:
+                extra = compose_prompt(series, shot)
+                if extra and extra not in (shot.image_prompt or ""):
+                    prompt = ", ".join(x for x in (shot.image_prompt, extra) if x)
+                    gen_shot = replace(shot, image_prompt=prompt)
+            result = self.providers.keyframe(gen_shot, out)
             with self._lock:
                 if result.ok:
                     shot.keyframe = result.path
@@ -242,9 +257,23 @@ class Director:
         if not targets:
             return {"ok": 0, "fail": 0}
 
+        prev_of: Dict[str, Shot] = {}
+        for i, s in enumerate(project.shots):
+            if i:
+                prev_of[s.id] = project.shots[i - 1]
+
         def work(shot: Shot) -> None:
             out = project.path("clips") / f"{shot.id}.mp4"
             kf = Path(shot.keyframe) if shot.keyframe else None
+            if shot.link_prev:
+                prev = prev_of.get(shot.id)
+                if prev and prev.clip and Path(prev.clip).exists():
+                    bridge = project.path("keyframes") / f"{shot.id}_prev.png"
+                    if extract_last_frame(prev.clip, bridge):
+                        kf = bridge                      # 接戏优先，压过原有设计图
+                        log(f"{shot.id} 用 {prev.id} 的末帧接戏", tag="vf")
+                elif not kf:
+                    warn(f"{shot.id} 想接上一镜，但上一镜还没有视频，本条只能纯文生视频")
             reservation = 0
             if self.s.minimax.enabled and not self.s.pipeline.mock:
                 reservation = self._budget_check(project, "minimax_video", f"{shot.id} 镜头")
