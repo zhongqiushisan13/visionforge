@@ -58,3 +58,7 @@ desktop.ini
 
 # 会话导出包
 exports/
+
+# 本地素材库与测试残留
+series/
+beta_runtime/
