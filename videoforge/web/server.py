@@ -578,11 +578,20 @@ def create_app() -> FastAPI:
     async def series_upload_image(slug: str, kind: str, aid: str, request: Request,
                                   role: str = "main", filename: str = "main.png") -> Dict[str, Any]:
         body = await request.body()
-        if len(body) < 512:
+        if len(body) < 64:
             raise HTTPException(400, "图片是空的")
         if len(body) > 20 * 1024 * 1024:
             raise HTTPException(413, "单张图不要超过 20MB")
-        suffix = Path(filename).suffix.lower() or ".png"
+        # 按文件头认格式，不信任扩展名（截图改成 .png 的 jpg 很常见）
+        head = body[:12]
+        if head.startswith(b"\x89PNG"):
+            suffix = ".png"
+        elif head[:3] == b"\xff\xd8\xff":
+            suffix = ".jpg"
+        elif head[:4] == b"RIFF" and body[8:12] == b"WEBP":
+            suffix = ".webp"
+        else:
+            raise HTTPException(400, "只收 PNG / JPG / WEBP 图片")
         try:
             rel = set_asset_image(slug, kind, aid, role, body, suffix)
         except KeyError as exc:

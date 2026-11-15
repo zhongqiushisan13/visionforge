@@ -26,6 +26,9 @@ TOKEN = security.token_path().read_text(encoding="utf-8").strip() \
     if security.token_path().exists() else "test-token"
 HEADERS = {"X-VF-Token": TOKEN}
 SLUG = "api-smoke"
+# 1x1 PNG，用来过文件头校验
+_PNG = __import__("base64").b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==")
 
 
 def setUpModule():
@@ -105,9 +108,13 @@ class TestSeriesApi(unittest.TestCase):
         aid = r.json()["id"]
 
         r = c.post(f"/api/series/{slug}/characters/{aid}/image?role=main&filename=a.png",
-                   headers=HEADERS, content=b"x" * 4096)
+                   headers=HEADERS, content=_PNG)
         self.assertEqual(r.status_code, 200, r.text)
         self.assertTrue(r.json()["path"].startswith("characters/"))
+
+        r = c.post(f"/api/series/{slug}/characters/{aid}/image?role=main&filename=a.txt",
+                   headers=HEADERS, content=b"not an image" * 100)
+        self.assertEqual(r.status_code, 400)
 
         r = c.get(f"/api/series/{slug}", headers=HEADERS)
         self.assertEqual(r.json()["characters"][0]["images"]["main"], r.json()["characters"][0]["images"]["main"])
