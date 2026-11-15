@@ -177,6 +177,16 @@ class TestSeriesApi(unittest.TestCase):
                    json={"project_slug": SLUG, "shot_id": "S01", "kind": "characters"})
         self.assertEqual(r.status_code, 400)
 
+    def test_setup_status_shape(self):
+        c = TestClient(srv.app, base_url="http://127.0.0.1")
+        r = c.get("/api/setup/status", headers=HEADERS)
+        self.assertEqual(r.status_code, 200, r.text)
+        data = r.json()
+        self.assertIn("comfy", data)
+        self.assertIn("items", data)
+        self.assertTrue(any(i["id"] == "sdxl-base" for i in data["items"]))
+        self.assertIn("standard", data["tiers"])
+
 
 if __name__ == "__main__":
     unittest.main()

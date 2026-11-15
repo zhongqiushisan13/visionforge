@@ -264,7 +264,9 @@ class Director:
                 shot.updated_at = now_iso()
                 project.save()
 
-        stats = self._run_batch(project, targets, work, "出关键帧")
+        # 本地 ComfyUI 只有一张显卡，并发出图会互相挤显存，串行更稳
+        workers = 1 if self.providers.comfy else None
+        stats = self._run_batch(project, targets, work, "出关键帧", workers=workers)
         return stats
 
     # ------------------------------------------------------------------ #
@@ -324,8 +326,9 @@ class Director:
     # ------------------------------------------------------------------ #
     # 批量执行器
     # ------------------------------------------------------------------ #
-    def _run_batch(self, project: Project, targets: List[Shot], fn, label: str) -> Dict[str, int]:
-        workers = max(1, min(self.s.pipeline.max_workers, len(targets)))
+    def _run_batch(self, project: Project, targets: List[Shot], fn, label: str,
+                   workers: Optional[int] = None) -> Dict[str, int]:
+        workers = max(1, min(workers or self.s.pipeline.max_workers, len(targets)))
         stats = {"ok": 0, "fail": 0}
         t0 = time.time()
         log(f"开始{label}：{len(targets)} 条，并发 {workers}")

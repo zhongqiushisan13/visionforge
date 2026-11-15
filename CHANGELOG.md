@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.5.0-beta.3 - 2026-11-15（测试版，未发布）
+
+### 新增：本地出图环境面板
+
+- 设置页新增「本地出图环境」：实时显示 ComfyUI 是否在线、底模/CLIP/IP-Adapter/节点是否就绪、磁盘剩余。
+- **不打包模型**：GitHub Release 单资产上限 2GB，SDXL 一套 9.7GB；ComfyUI 又是 GPL。改为「可检测、可一键装、可以不装」。
+- 一键安装：断点续传（Range）、镜像源切换（hf-mirror / 官方）、SHA256 校验、进度写进任务日志；节点用 gh-proxy zip 解压。
+- 设置路径：只认含 `models/` 的目录（自动兼容选到上一层），保存进 `config.json` 的 `comfy.root`。
+- 离线导入：填本地文件路径，校验通过后拷进 ComfyUI。
+- 双档：standard（SDXL 9.7G）/ light（SD1.5 4.5G），当前面板只展示 standard，light 已在 catalog 里预留。
+- 卸载/不装都不影响出片：云端 H3 与占位片照常可用。
+
+### 测试
+
+- 新增 11 条：目录校验、状态判定、文件校验、导入、接口形状（总数 159）。
+
 ## v1.5.0-beta.2 - 2026-11-15（测试版，未发布）
 
 ### 新增：IP-Adapter 参考图

@@ -20,6 +20,7 @@ from starlette.background import BackgroundTask
 
 from .. import __version__
 from .. import llm_providers
+from .. import setup_env
 from ..config import APP_ROOT, BUNDLE_ROOT, PROJECT_ROOT, Settings, env_file_path, tighten_file_permissions
 from ..diagnostics import bundle_bytes, suggested_name as diag_name
 from ..edit_commands import apply_ops, interpret
@@ -1216,6 +1217,57 @@ def create_app() -> FastAPI:
         data = bundle_bytes(settings=_settings(), projects_root=_projects_root())
         return Response(content=data, media_type="application/zip",
                         headers={"Content-Disposition": f'attachment; filename="{diag_name()}"'})
+
+    # ---------------- 本地出图环境 ---------------- #
+    @app.get("/api/setup/status")
+    def setup_status() -> Dict[str, Any]:
+        return setup_env.status(_settings())
+
+    @app.post("/api/setup/root")
+    def setup_root(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        path = str(payload.get("path") or "").strip()
+        if not path:
+            raise HTTPException(400, "路径不能为空")
+        try:
+            info = setup_env.set_root(_settings(), path)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        _merge_config("comfy", {"root": info["root"]})
+        return {"ok": True, **info, "status": setup_env.status(_settings())}
+
+    @app.post("/api/setup/install")
+    def setup_install(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        _guard_busy()
+        items = [str(x) for x in (payload.get("items") or [])]
+        if not items:
+            raise HTTPException(400, "没有选择要安装的组件")
+        unknown = [i for i in items if i not in setup_env.CATALOG]
+        if unknown:
+            raise HTTPException(400, f"未知组件：{unknown}")
+        mirror = bool(payload.get("mirror", True))
+
+        def run(job: Job) -> Dict[str, Any]:
+            return setup_env.install(_settings(), items, job=job, mirror=mirror)
+
+        job = MANAGER.submit("setup", run)
+        return {"job": job.id}
+
+    @app.post("/api/setup/import")
+    def setup_import(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        _guard_busy()
+        item = str(payload.get("item") or "")
+        path = str(payload.get("path") or "").strip()
+        if item not in setup_env.CATALOG:
+            raise HTTPException(400, f"未知组件：{item}")
+        if not path:
+            raise HTTPException(400, "请填写本地文件路径")
+
+        def run(job: Job) -> Dict[str, Any]:
+            target = setup_env.import_local(item, Path(_settings().comfy.root), Path(path), job=job)
+            return {"path": str(target)}
+
+        job = MANAGER.submit("setup", run)
+        return {"job": job.id}
 
     app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
     return app

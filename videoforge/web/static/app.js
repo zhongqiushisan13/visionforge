@@ -21,6 +21,7 @@ const S = {
   workflows: [], doctorLoading: false,
   filter: 'all', exporting: false,
   seriesList: null, series: null, assetsSlug: '', assetKind: 'characters',
+  setup: null,
 };
 
 /* ------------------------------------------------------------------ */
@@ -449,6 +450,7 @@ async function loadDoctor() {
   S.doctorLoading = true;
   try {
     S.doctor = await api('/api/system/doctor');
+    try { S.setup = await api('/api/setup/status'); } catch (e) { /* 环境检测失败不挡设置页 */ }
     if (S.view === 'settings') render();
   } catch (e) {
     toast(e.message, 'err');
@@ -1220,6 +1222,80 @@ function pickSeriesModal() {
 /* ------------------------------------------------------------------ */
 /* 设置                                                                */
 /* ------------------------------------------------------------------ */
+function fmtGB(n) { return `${(Number(n || 0) / 1e9).toFixed(1)} GB`; }
+function fmtSize(n) {
+  const v = Number(n || 0);
+  if (v >= 1e9) return `${(v / 1e9).toFixed(1)} GB`;
+  if (v >= 1e6) return `${(v / 1e6).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(v / 1e3))} KB`;
+}
+
+function setupPanel() {
+  const st = S.setup;
+  if (!st) {
+    return `<div class="panel" style="margin-bottom:14px">
+      <div class="panel-head">${icon('cpu')}<h3>${t('本地出图环境')}</h3></div>
+      <div class="hint">${t('检测中…')}</div></div>`;
+  }
+  const items = st.items || [];
+  const standard = st.tiers?.standard || [];
+  const missing = items.filter(i => !i.ready && standard.includes(i.id));
+  const row = i => `<div class="insp-row"><label>${esc(i.label)}</label>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <span class="chip ${i.ready ? 'ok' : 'mute'}">${i.ready ? t('已就绪') : t('缺失')} · ${fmtSize(i.size)}</span>
+        ${i.ready ? '' : `<button class="btn sm ghost" data-act="setup-item" data-id="${i.id}">${icon('download')}${t('下载')}</button>`}
+      </div></div>`;
+  return `<div class="panel" style="margin-bottom:14px">
+    <div class="panel-head">${icon('cpu')}<h3>${t('本地出图环境')}</h3>
+      <span class="sub">${st.comfy.reachable ? `ComfyUI ${esc(st.comfy.version || '')}` : t('未连接')}</span>
+      <div class="spacer"></div>
+      <button class="btn sm ghost" data-act="setup-root">${icon('folder')}${t('设置路径')}</button>
+    </div>
+    <div class="hint" style="margin-bottom:8px">${st.root.valid
+      ? `${t('ComfyUI 目录')}：<span class="mono">${esc(st.root.path)}</span> · ${t('磁盘剩余')} ${fmtGB(st.disk_free)}`
+      : t('先设置 ComfyUI 目录才能装模型')}</div>
+    <label class="chk"><input type="checkbox" id="setupMirror" checked> ${t('镜像源（国内加速）')}</label>
+    <div class="row" style="margin:8px 0;flex-wrap:wrap">
+      <button class="btn sm primary" data-act="setup-install"
+        ${st.root.valid && missing.length ? '' : 'disabled'}>${icon('download')}${t('一键安装缺失组件')}${missing.length ? ` (${missing.length})` : ''}</button>
+      <button class="btn sm ghost" data-act="setup-import">${icon('upload')}${t('导入本地文件')}</button>
+    </div>
+    ${items.filter(i => i.tier === 'standard').map(row).join('')}
+    <div class="hint" style="margin-top:8px">${t('不装也能用云端出片；装好本地模型后关键帧才走 IP-Adapter')}</div>
+  </div>`;
+}
+
+function setupRootModal() {
+  openModal(`
+    <div class="modal-head">${icon('folder')}<h2>${t('设置 ComfyUI 路径')}</h2>
+      <button class="icon-btn close" data-act="close-modal">${icon('close')}</button></div>
+    <div class="field"><label>${t('ComfyUI 主目录（含 main.py 与 models/）')}</label>
+      <input class="input mono" id="cuRoot" value="${esc(S.setup?.root?.path || '')}"
+             placeholder="D:\\ComfyUI_windows_portable\\ComfyUI"></div>
+    <div class="hint">${t('选错了也没关系，保存前会检查 models/ 在不在')}</div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-act="close-modal">${t('取消')}</button>
+      <button class="btn primary" data-act="do-setup-root">${icon('save')}${t('保存')}</button>
+    </div>`, 'sm');
+}
+
+function setupImportModal() {
+  const items = (S.setup?.items || []).filter(i => !i.ready);
+  openModal(`
+    <div class="modal-head">${icon('upload')}<h2>${t('导入本地文件')}</h2>
+      <button class="icon-btn close" data-act="close-modal">${icon('close')}</button></div>
+    <div class="hint" style="margin-bottom:10px">${t('离线部署用：选已经下好的模型文件，校验通过后放进 ComfyUI 目录')}</div>
+    <div class="field"><label>${t('组件')}</label>
+      <select class="select" id="impItem">${items.map(i =>
+        `<option value="${i.id}">${esc(i.label)}</option>`).join('')}</select></div>
+    <div class="field"><label>${t('本地文件路径')}</label>
+      <input class="input mono" id="impPath" placeholder="D:\\downloads\\model.safetensors"></div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-act="close-modal">${t('取消')}</button>
+      <button class="btn primary" data-act="do-setup-import">${icon('upload')}${t('导入')}</button>
+    </div>`, 'sm');
+}
+
 function renderSettings() {
   const st = S.settings;
   if (!st) return `<div class="panel"><div class="skeleton" style="height:220px"></div></div>`;
@@ -1347,6 +1423,7 @@ function renderSettings() {
     </div>
 
     <div>
+      ${setupPanel()}
       <div class="panel" style="margin-bottom:14px">
         <div class="panel-head">${icon('cpu')}<h3>系统自检</h3>
           <span class="sub">${d.first_run ? '尚未自动配置' : '已自动配置'}</span>
@@ -1560,7 +1637,7 @@ function previewModal(sid) {
 const JOB_LABEL = {
   plan: 'DeepSeek 正在写剧本与分镜', render: '全量渲染', all: '一键成片',
   voice: '生成配音', keyframes: '渲染关键帧', clips: '生成镜头', assemble: '剪辑合成', revise: '重拍镜头',
-  asset: '生成素材图',
+  asset: '生成素材图', setup: '安装本地环境',
 };
 
 function showJob(jobId, title) {
@@ -1610,6 +1687,9 @@ async function pollJob(jobId) {
             await ensureSeries(true);
             render();
           } catch (e) { /* 系列可能被删了 */ }
+        } else if (j.kind === 'setup') {
+          try { S.setup = await api('/api/setup/status'); } catch (e) { /* 忽略 */ }
+          render();
         } else {
           await refreshProject();
           render();
@@ -1833,6 +1913,48 @@ document.addEventListener('click', async e => {
       }});
       closeModal();
       toast(t('提取成功'));
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+
+  /* ---- 本地出图环境 ---- */
+  if (act === 'setup-root') { setupRootModal(); return; }
+  if (act === 'do-setup-root') {
+    try {
+      const r = await api('/api/setup/root', { method: 'POST', body: { path: $('#cuRoot').value.trim() } });
+      S.setup = r.status;
+      closeModal();
+      render();
+      toast(t('路径已保存'));
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'setup-install') {
+    const standard = S.setup?.tiers?.standard || [];
+    const ids = (S.setup?.items || []).filter(i => !i.ready && standard.includes(i.id)).map(i => i.id);
+    if (!ids.length) return toast(t('组件都齐了'), 'ok');
+    try {
+      const r = await api('/api/setup/install', { method: 'POST', body: {
+        items: ids, mirror: $('#setupMirror')?.checked !== false } });
+      showJob(r.job, t('安装本地环境'));
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'setup-item') {
+    try {
+      const r = await api('/api/setup/install', { method: 'POST', body: {
+        items: [el.dataset.id], mirror: $('#setupMirror')?.checked !== false } });
+      showJob(r.job, t('安装本地环境'));
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'setup-import') { setupImportModal(); return; }
+  if (act === 'do-setup-import') {
+    try {
+      const r = await api('/api/setup/import', { method: 'POST', body: {
+        item: $('#impItem').value, path: $('#impPath').value.trim() } });
+      closeModal();
+      showJob(r.job, t('导入本地文件'));
     } catch (err) { toast(err.message, 'err'); }
     return;
   }

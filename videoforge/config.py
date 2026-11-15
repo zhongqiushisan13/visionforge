@@ -233,6 +233,7 @@ class ComfyConfig:
     """ComfyUI：本地出关键帧，LoRA 走 LoraLoader 节点自动注入。"""
 
     base_url: str = "http://127.0.0.1:8188"
+    root: str = ""                            # ComfyUI 主目录（装模型/节点用）
     workflow: str = "sdxl_txt2img.json"
     checkpoint: str = ""                      # 空则用工作流里既有的
     default_lora: str = ""                    # 例：tonwin_style_v3.safetensors
@@ -395,6 +396,7 @@ class Settings:
         )
         cf = ComfyConfig(
             base_url=_env("COMFYUI_BASE_URL", "http://127.0.0.1:8188"),
+            root=_env("COMFYUI_ROOT", ""),
             workflow=_env("COMFYUI_WORKFLOW", "sdxl_txt2img.json"),
             checkpoint=_env("COMFYUI_CHECKPOINT", ""),
             default_lora=_env("COMFYUI_LORA", ""),
