@@ -56,10 +56,10 @@ class Providers:
             return self.comfy
         return self.local
 
-    def keyframe(self, shot, out_path):
+    def keyframe(self, shot, out_path, ref_image=None):
         if self.comfy:
             try:
-                return self.comfy.generate_keyframe(shot, out_path)
+                return self.comfy.generate_keyframe(shot, out_path, ref_image=ref_image)
             except ProviderError as exc:
                 from ..utils import warn
                 warn(f"{shot.id} ComfyUI 出图失败，改用本地占位图：{exc}")

@@ -245,6 +245,9 @@ class ComfyConfig:
     height: int = 768
     batch: int = 1
     negative: str = "text, watermark, logo, extra fingers, deformed hands, lowres, jpeg artifacts"
+    # IP-Adapter：工作流里带 IPAdapter 节点时，参考图按这个权重注入
+    ipadapter_weight: float = 0.45
+    ipadapter_preset: str = "PLUS (high strength)"
     poll_interval: float = 2.0
     timeout: int = 900
 
@@ -400,6 +403,8 @@ class Settings:
             cfg=_env_float("COMFYUI_CFG", 6.5),
             width=_env_int("COMFYUI_WIDTH", 1344),
             height=_env_int("COMFYUI_HEIGHT", 768),
+            ipadapter_weight=_env_float("COMFYUI_IPADAPTER_WEIGHT", 0.45),
+            ipadapter_preset=_env("COMFYUI_IPADAPTER_PRESET", "PLUS (high strength)"),
         )
         rd = RenderConfig(
             width=_env_int("VF_WIDTH", 1920),

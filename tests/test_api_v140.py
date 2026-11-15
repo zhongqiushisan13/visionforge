@@ -135,6 +135,48 @@ class TestSeriesApi(unittest.TestCase):
         r = c.post(f"/api/projects/{SLUG}/series", headers=HEADERS, json={"series_id": "nope"})
         self.assertEqual(r.status_code, 404)
 
+    def test_delete_series_moves_to_trash(self):
+        c = TestClient(srv.app, base_url="http://127.0.0.1")
+        r = c.post("/api/series", headers=HEADERS, json={"title": "待删系列"})
+        slug = r.json()["slug"]
+        r = c.delete(f"/api/series/{slug}", headers=HEADERS)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(c.get(f"/api/series/{slug}", headers=HEADERS).status_code, 404)
+
+    def test_asset_from_shot(self):
+        c = TestClient(srv.app, base_url="http://127.0.0.1")
+        r = c.post("/api/series", headers=HEADERS, json={"title": "提取系列"})
+        slug = r.json()["slug"]
+
+        proj_dir = Path(os.environ["VF_PROJECTS_DIR"]) / SLUG
+        kf = proj_dir / "keyframes" / "S01.png"
+        kf.parent.mkdir(parents=True, exist_ok=True)
+        kf.write_bytes(_PNG)
+        project = Project.load(proj_dir)
+        project.shots[0].keyframe = str(kf)
+        project.shots[0].image_prompt = "rainy alley, neon"
+        project.save()
+
+        r = c.post(f"/api/series/{slug}/from-shot", headers=HEADERS,
+                   json={"project_slug": SLUG, "shot_id": "S01", "kind": "characters", "name": "雨夜男主"})
+        self.assertEqual(r.status_code, 200, r.text)
+        asset = r.json()["asset"]
+        self.assertEqual(asset["name"], "雨夜男主")
+        self.assertTrue(asset["images"]["main"].startswith("characters/"))
+        saved = c.get(f"/api/series/{slug}", headers=HEADERS).json()
+        self.assertEqual(saved["characters"][0]["look_en"], "rainy alley, neon")
+
+    def test_asset_from_shot_requires_keyframe(self):
+        c = TestClient(srv.app, base_url="http://127.0.0.1")
+        slug = c.post("/api/series", headers=HEADERS, json={"title": "无图系列"}).json()["slug"]
+        proj_dir = Path(os.environ["VF_PROJECTS_DIR"]) / SLUG
+        project = Project.load(proj_dir)
+        project.shots[0].keyframe = ""
+        project.save()
+        r = c.post(f"/api/series/{slug}/from-shot", headers=HEADERS,
+                   json={"project_slug": SLUG, "shot_id": "S01", "kind": "characters"})
+        self.assertEqual(r.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

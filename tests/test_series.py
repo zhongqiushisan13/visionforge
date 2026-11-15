@@ -89,8 +89,9 @@ class DirectorSeriesTest(unittest.TestCase):
     def test_keyframe_prompt_includes_character(self):
         captured = {}
 
-        def fake_keyframe(shot, out):
+        def fake_keyframe(shot, out, **kwargs):
             captured["prompt"] = shot.image_prompt
+            captured["ref"] = kwargs.get("ref_image")
             Path(out).write_bytes(b"png")
             from videoforge.providers.base import ProviderResult
             return ProviderResult(path=str(out), provider="fake", task_id="t")

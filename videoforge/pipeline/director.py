@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from ..config import Settings
 from ..providers import Providers, ProviderError
 from ..schemas import Project, Shot
-from ..series import compose_prompt, extract_last_frame, load_series
+from ..series import asset_path, compose_prompt, extract_last_frame, load_series
 from ..utils import Timer, ensure_dir, human_time, log, now_iso, warn
 from .editor import Editor
 from .writer import Screenwriter
@@ -223,6 +223,25 @@ class Director:
             except Exception as exc:
                 warn(f"系列 {project.series_id} 读不出来，退回纯文字出图：{exc}")
 
+        def ref_for(shot: Shot) -> Optional[Path]:
+            """挑一张参考图：优先第一个角色的定妆图，其次是场景全景。"""
+            if not series:
+                return None
+            for cid in getattr(shot, "cast", None) or []:
+                asset = next((a for a in series.get("characters") or [] if a.get("id") == cid), None)
+                if asset:
+                    p = asset_path(project.series_id, (asset.get("images") or {}).get("main", ""))
+                    if p:
+                        return p
+            scene = getattr(shot, "scene_ref", "") or ""
+            if scene:
+                asset = next((a for a in series.get("scenes") or [] if a.get("id") == scene), None)
+                if asset:
+                    p = asset_path(project.series_id, (asset.get("images") or {}).get("wide", ""))
+                    if p:
+                        return p
+            return None
+
         def work(shot: Shot) -> None:
             out = project.path("keyframes") / f"{shot.id}.png"
             gen_shot = shot
@@ -231,7 +250,7 @@ class Director:
                 if extra and extra not in (shot.image_prompt or ""):
                     prompt = ", ".join(x for x in (shot.image_prompt, extra) if x)
                     gen_shot = replace(shot, image_prompt=prompt)
-            result = self.providers.keyframe(gen_shot, out)
+            result = self.providers.keyframe(gen_shot, out, ref_image=ref_for(shot))
             with self._lock:
                 if result.ok:
                     shot.keyframe = result.path

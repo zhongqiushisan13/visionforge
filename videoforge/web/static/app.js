@@ -816,6 +816,7 @@ function inspectorHtml(s, p) {
             `<option value="${esc(x.id)}" ${s.scene_ref === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}
         </select></div>
       <label class="chk" style="margin:6px 0 10px"><input type="checkbox" id="dLinkPrev" ${s.link_prev ? 'checked' : ''}> ${t('接上一镜末帧')}</label>
+      <button class="btn sm ghost" data-act="extract-asset" data-shot="${s.id}" style="margin-bottom:10px">${icon('copy')}${t('提取为素材')}</button>
     ` : `<div class="hint">${t('还没绑定系列，去「素材库」建一个再回来选角')}</div>`}
 
     <div class="sec-title">声音与字幕</div>
@@ -1089,6 +1090,7 @@ function renderSeriesDetail() {
     <span class="hint">${t('风格')}：${esc((s.style_prompt || '').slice(0, 50)) || '—'}</span>
     <div class="spacer"></div>
     <button class="btn sm ghost" data-act="edit-series">${icon('edit')}${t('编辑系列')}</button>
+    <button class="btn sm danger" data-act="del-series" title="${t('删除系列')}">${icon('trash')}</button>
     <button class="btn sm primary" data-act="new-asset" data-kind="${kind}">${icon('plus')}${t('新建素材')}</button>
   </div>
   <div class="preset-row" style="margin-bottom:12px">
@@ -1169,6 +1171,30 @@ function assetModal(kind, asset) {
     <div class="modal-foot">
       <button class="btn ghost" data-act="close-modal">${t('取消')}</button>
       <button class="btn primary" data-act="save-asset" data-kind="${kind}" data-id="${esc(asset?.id || '')}">${icon('save')}${t('保存')}</button>
+    </div>`, 'sm');
+}
+
+function extractAssetModal(sid) {
+  const s = S.project?.shots?.find(x => x.id === sid);
+  if (!s) return;
+  if (!s.keyframe_url) return toast(t('这条镜头还没有关键帧，先出一张'), 'warn');
+  const kinds = [['characters', '角色'], ['scenes', '场景'], ['props', '道具']];
+  openModal(`
+    <div class="modal-head">${icon('copy')}<h2>${t('提取为素材')}</h2>
+      <button class="icon-btn close" data-act="close-modal">${icon('close')}</button></div>
+    <div class="hint" style="margin-bottom:10px">${t('用这条镜头的关键帧建一个素材，之后别的集直接选它')}</div>
+    <div class="col-2">
+      <div class="field"><label>${t('类型')}</label>
+        <select class="select" id="exKind">${kinds.map(([v, n]) =>
+          `<option value="${v}">${t(n)}</option>`).join('')}</select></div>
+      <div class="field"><label>${t('名字')}</label>
+        <input class="input" id="exName" value="${esc(s.scene || s.id)}"></div>
+    </div>
+    <div class="field"><label>${t('英文描述（喂给模型）')}</label>
+      <textarea class="textarea mono" id="exDesc" rows="2">${esc(s.image_prompt || '')}</textarea></div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-act="close-modal">${t('取消')}</button>
+      <button class="btn primary" data-act="do-extract" data-shot="${s.id}">${icon('check')}${t('提取')}</button>
     </div>`, 'sm');
 }
 
@@ -1780,6 +1806,34 @@ document.addEventListener('click', async e => {
     if (!AUTO.dirty) snapshotShots();
     try { await saveShotFields(sid, true); AUTO.dirty = false; }
     catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+
+  if (act === 'del-series') {
+    if (!confirm(t('删掉这个系列？素材会一起移进回收站。'))) return;
+    try {
+      await api(`/api/series/${S.series.slug}`, { method: 'DELETE' });
+      S.series = null; S.assetsSlug = '';
+      await ensureSeries(true);
+      render();
+      toast(t('已删除系列'));
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'extract-asset') { extractAssetModal(el.dataset.shot); return; }
+  if (act === 'do-extract') {
+    if (!S.series) return toast(t('先在素材库建一个系列'), 'warn');
+    try {
+      await api(`/api/series/${S.series.slug}/from-shot`, { method: 'POST', body: {
+        project_slug: S.project.slug,
+        shot_id: el.dataset.shot,
+        kind: $('#exKind').value,
+        name: $('#exName').value.trim(),
+        desc_en: $('#exDesc').value.trim(),
+      }});
+      closeModal();
+      toast(t('提取成功'));
+    } catch (err) { toast(err.message, 'err'); }
     return;
   }
 

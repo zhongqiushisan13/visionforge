@@ -30,9 +30,9 @@ from ..pipeline import Director
 from ..pipeline.subtitles import build_srt_text
 from ..providers.comfyui import ComfyUIProvider
 from ..schemas import Project, Shot
-from ..series import (KINDS, add_asset, asset_path, compose_prompt, create_series,
-                      delete_asset, list_series, load_series, save_series,
-                      series_dir, set_asset_image, update_asset)
+from ..series import (KINDS, add_asset, asset_path, create_series, delete_asset,
+                      list_series, load_series, save_series, series_dir, series_root,
+                      set_asset_image, update_asset)
 from ..sysprobe import auto_configure, doctor_summary
 from ..utils import find_ffmpeg, probe_duration, read_json, recent_warnings, reap_orphans
 from ..vfpkg import MAX_UNCOMPRESSED, PackageError, export_project, import_package
@@ -534,6 +534,49 @@ def create_app() -> FastAPI:
                 data[key] = str(payload[key])
         return save_series(data)
 
+    @app.delete("/api/series/{slug}")
+    def series_delete(slug: str) -> Dict[str, Any]:
+        """删除系列：挪进 series/.trash，不直接抹盘。"""
+        d = series_dir(slug)
+        if not (d / "series.json").exists():
+            raise HTTPException(404, f"系列不存在：{slug}")
+        trash = series_root() / ".trash"
+        trash.mkdir(parents=True, exist_ok=True)
+        target = trash / f"{d.name}-{int(time.time())}"
+        shutil.move(str(d), str(target))
+        return {"ok": True, "moved_to": str(target)}
+
+    @app.post("/api/series/{slug}/from-shot")
+    def series_asset_from_shot(slug: str, payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """把某个镜头的关键帧直接提升为角色/场景/道具素材。"""
+        kind = str(payload.get("kind") or "characters")
+        if kind not in KINDS:
+            raise HTTPException(400, f"未知素材类型：{kind}")
+        project_slug = str(payload.get("project_slug") or "").strip()
+        shot_id = str(payload.get("shot_id") or "").strip()
+        if not project_slug or not shot_id:
+            raise HTTPException(400, "缺少 project_slug / shot_id")
+        p = _load(project_slug)
+        shot = p.shot(shot_id)
+        if not shot:
+            raise HTTPException(404, f"镜头不存在：{shot_id}")
+        src = Path(shot.keyframe) if shot.keyframe else None
+        if not src or not src.exists():
+            raise HTTPException(400, "这条镜头还没有关键帧，先出一张再来提取")
+        try:
+            load_series(slug)
+        except FileNotFoundError:
+            raise HTTPException(404, f"系列不存在：{slug}")
+        name = str(payload.get("name") or "").strip() or f"{shot.id} {shot.scene or ''}".strip()[:24]
+        desc = str(payload.get("desc_en") or shot.image_prompt or shot.scene or "")[:400]
+        asset = add_asset(slug, kind, name,
+                          look_en=desc if kind == "characters" else "",
+                          desc_en=desc if kind != "characters" else "",
+                          seed=shot.seed)
+        role = "wide" if kind == "scenes" else "main"
+        rel = set_asset_image(slug, kind, asset["id"], role, src.read_bytes(), src.suffix or ".png")
+        return {"ok": True, "asset": {**asset, "images": {role: rel}}, "path": rel}
+
     @app.post("/api/series/{slug}/{kind}")
     def series_add_asset(slug: str, kind: str, payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         if kind not in KINDS:
@@ -622,7 +665,8 @@ def create_app() -> FastAPI:
                         negative_prompt=data.get("negative_prompt") or "", seed=seed)
             tmp = _projects_root().parent / "cache" / f"{slug}-{kind}-{aid}-{role}.png"
             comfy = ComfyUIProvider(s)
-            result = comfy.generate_keyframe(shot, tmp)
+            rel_ref = (asset.get("images") or {}).get("main") or (asset.get("images") or {}).get("wide") or ""
+            result = comfy.generate_keyframe(shot, tmp, ref_image=asset_path(slug, rel_ref))
             if not result.ok:
                 raise RuntimeError("ComfyUI 没有产出图片，检查工作流与提示词")
             rel = set_asset_image(slug, kind, aid, role, Path(result.path).read_bytes(), ".png")

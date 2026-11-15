@@ -23,6 +23,8 @@ from ..utils import ensure_dir, log, read_json, warn
 
 LORA_CLASSES = ("LoraLoader", "LoraLoaderModelOnly")
 SAVE_CLASSES = ("SaveImage", "PreviewImage", "Image Save")
+IPADAPTER_CLASSES = ("IPAdapterAdvanced", "IPAdapter", "IPAdapterEmbeds")
+IPADAPTER_LOADER_CLASSES = ("IPAdapterUnifiedLoader", "IPAdapterModelLoader")
 
 
 class ComfyUIProvider:
@@ -113,6 +115,9 @@ class ComfyUIProvider:
             "ckpt": (self._nodes_by_class(wf, ("CheckpointLoaderSimple",)) or [None])[0],
             "save": (self._nodes_by_class(wf, SAVE_CLASSES) or [None])[0],
             "lora": (self._nodes_by_class(wf, LORA_CLASSES) or [None])[0],
+            "load_image": (self._nodes_by_class(wf, ("LoadImage",)) or [None])[0],
+            "ipadapter": (self._nodes_by_class(wf, IPADAPTER_CLASSES) or [None])[0],
+            "ipa_loader": (self._nodes_by_class(wf, IPADAPTER_LOADER_CLASSES) or [None])[0],
         }
 
     def inject_lora(self, wf: Dict[str, Any], lora_name: str, strength: float) -> str:
@@ -157,7 +162,22 @@ class ComfyUIProvider:
         log(f"LoRA 节点已注入：{lora_name} @ {strength}（上游 {ckpt}）", tag="comfy")
         return new_id
 
-    def build_prompt(self, shot: Shot) -> tuple[Dict[str, Any], int]:
+    def upload_image(self, path: Path) -> str:
+        """把参考图塞进 ComfyUI 的 input 目录，返回 LoadImage 能用的文件名。"""
+        path = Path(path)
+        with path.open("rb") as fh:
+            files = {"image": (path.name, fh, "image/png")}
+            data = {"overwrite": "true", "type": "input"}
+            r = self.session.post(self.cfg.base_url.rstrip("/") + "/upload/image",
+                                  files=files, data=data, timeout=120)
+        if r.status_code >= 400:
+            raise ProviderError(f"参考图上传失败 HTTP {r.status_code}：{r.text[:200]}", retryable=False)
+        info = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        name = info.get("name") or path.name
+        sub = info.get("subfolder") or ""
+        return f"{sub}/{name}" if sub else name
+
+    def build_prompt(self, shot: Shot, ref_image: Optional[Path] = None) -> tuple[Dict[str, Any], int]:
         wf = copy.deepcopy(self.load_workflow())
         roles = self._resolve_roles(wf)
         seed = shot.seed or (int(uuid.uuid4().int % 2_147_483_647))
@@ -192,6 +212,42 @@ class ComfyUIProvider:
         lora = shot.lora or self.cfg.default_lora
         if lora:
             self.inject_lora(wf, lora, shot.lora_strength or self.cfg.lora_strength)
+
+        # 参考图（IP-Adapter）：工作流里有 IPAdapter 节点才注入，没有就静默跳过
+        wired_ref = False
+        if ref_image and roles["ipadapter"]:
+            try:
+                name = self.upload_image(Path(ref_image))
+            except Exception as exc:
+                warn(f"参考图上传失败，本条退化为纯文字出图：{exc}")
+                name = ""
+            if name:
+                if roles["load_image"]:
+                    wf[roles["load_image"]].setdefault("inputs", {})["image"] = name
+                else:
+                    new_id = "vf_ref_image"
+                    while new_id in wf:
+                        new_id += "_"
+                    wf[new_id] = {"class_type": "LoadImage",
+                                  "inputs": {"image": name, "upload": "image"},
+                                  "_meta": {"title": "VF_REF_IMAGE"}}
+                    wf[roles["ipadapter"]].setdefault("inputs", {})["image"] = [new_id, 0]
+
+                ipa = wf[roles["ipadapter"]].setdefault("inputs", {})
+                weight = float(getattr(shot, "ipadapter_weight", 0) or self.cfg.ipadapter_weight)
+                ipa["weight"] = max(0.0, min(1.5, weight))
+                if roles["ipa_loader"]:
+                    loader = wf[roles["ipa_loader"]].setdefault("inputs", {})
+                    if "preset" in loader:
+                        loader["preset"] = self.cfg.ipadapter_preset
+                log(f"{shot.id} 已注入参考图 {Path(ref_image).name}（权重 {ipa['weight']}）", tag="comfy")
+                wired_ref = True
+
+        # 没参考图就走旁路：让 sampler 直接吃基础模型，别让 IP-Adapter 拿默认图污染画面
+        if roles["ipadapter"] and roles["sampler"] and not wired_ref:
+            smp = wf[roles["sampler"]].setdefault("inputs", {})
+            if (smp.get("model") or [None])[0] == roles["ipadapter"]:
+                smp["model"] = [roles["lora"] or roles["ckpt"], 0]
 
         return wf, seed
 
@@ -258,8 +314,9 @@ class ComfyUIProvider:
         return out_path
 
     # ---------------- 对外 ---------------- #
-    def generate_keyframe(self, shot: Shot, out_path: Path) -> ProviderResult:
-        wf, seed = self.build_prompt(shot)
+    def generate_keyframe(self, shot: Shot, out_path: Path,
+                          ref_image: Optional[Path] = None) -> ProviderResult:
+        wf, seed = self.build_prompt(shot, ref_image=ref_image)
         pid = self.queue(wf)
         log(f"{shot.id} 关键帧入队 prompt_id={pid} seed={seed}", tag="comfy")
         entry = self.wait(pid, shot.id)

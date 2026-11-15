@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.5.0-beta.2 - 2026-11-15（测试版，未发布）
+
+### 新增：IP-Adapter 参考图
+
+- 工作流 `workflows/sdxl_ipadapter.json`：SDXL + IP-Adapter（PLUS high strength）。
+- 出关键帧时自动挑参考图：优先第一个角色的定妆图，其次场景全景；上传到 ComfyUI 后注入 `IPAdapterAdvanced`。
+- 没有参考图时自动旁路 IP-Adapter（sampler 直接吃基础模型），不会被默认图污染。
+- 权重可配：`COMFYUI_IPADAPTER_WEIGHT`（默认 0.45）、`COMFYUI_IPADAPTER_PRESET`。
+  实测：0.45 只锁人、场景能换；0.65 会连背景一起搬；0.85 几乎照抄参考图。
+
+### 真机验证
+
+- 本机装齐 SDXL base 1.0（6.5G）+ CLIP ViT-H（2.4G）+ IP-Adapter plus（808M）+ `ComfyUI_IPAdapter_plus` 节点。
+- 同一提示词出两张：无参考 20s 出正常雨夜肖像；用这张当定妆图、权重 0.45、改咖啡馆提示词，42s 出「同一个人 + 红外套 + 室内咖啡馆」。
+
+### 补齐
+
+- 删除系列：`DELETE /api/series/{slug}`，移进 `series/.trash`，不直接抹盘。
+- 从镜头提取素材：`POST /api/series/{slug}/from-shot`，把某镜关键帧提成角色/场景/道具；界面上在检查器里一键提取。
+
+### 测试
+
+- 新增 IP-Adapter 注入/旁路用例 4 条、系列删除与提取 3 条（总数 148）。
+
 ## v1.5.0-beta.1 - 2026-11-14（测试版，未发布）
 
 ### 新增：素材库（系列层）
