@@ -103,7 +103,7 @@ def main() -> int:
 
     # 把用户真正要碰的东西放到 exe 旁边（否则都埋在 _internal 里，谁也找不着）
     step("整理发布目录")
-    for name in (".env.example", "README.md", "config.example.json"):
+    for name in (".env.example", "README.md", "config.example.json", "试用说明.txt"):
         src = ROOT / name
         if src.exists():
             shutil.copy2(src, DIST / name)
