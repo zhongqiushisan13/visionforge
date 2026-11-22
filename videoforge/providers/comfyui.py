@@ -23,6 +23,20 @@ from ..utils import ensure_dir, log, read_json, warn
 
 LORA_CLASSES = ("LoraLoader", "LoraLoaderModelOnly")
 SAVE_CLASSES = ("SaveImage", "PreviewImage", "Image Save")
+
+# 关键帧按项目画幅生成：方图喂进 16:9 的视频模型会被裁掉半个人
+ASPECT_SIZES = {
+    "16:9": (1216, 704),
+    "9:16": (704, 1216),
+    "1:1": (1024, 1024),
+    "4:3": (1152, 864),
+    "3:4": (864, 1152),
+    "21:9": (1344, 576),
+}
+
+
+def size_for_aspect(aspect: str, fallback: tuple[int, int]) -> tuple[int, int]:
+    return ASPECT_SIZES.get(str(aspect or "").strip(), fallback)
 IPADAPTER_CLASSES = ("IPAdapterAdvanced", "IPAdapter", "IPAdapterEmbeds")
 IPADAPTER_LOADER_CLASSES = ("IPAdapterUnifiedLoader", "IPAdapterModelLoader")
 

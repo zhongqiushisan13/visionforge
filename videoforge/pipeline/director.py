@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from ..config import Settings
 from ..providers import Providers, ProviderError
+from ..providers.comfyui import size_for_aspect
 from ..schemas import Project, Shot
 from ..series import asset_path, compose_prompt, extract_last_frame, load_series
 from ..utils import Timer, ensure_dir, human_time, log, now_iso, warn
@@ -266,7 +267,21 @@ class Director:
 
         # 本地 ComfyUI 只有一张显卡，并发出图会互相挤显存，串行更稳
         workers = 1 if self.providers.comfy else None
-        stats = self._run_batch(project, targets, work, "出关键帧", workers=workers)
+        # 关键帧画幅跟项目走（16:9 → 1216x704），否则方图进了 16:9 的视频模型会被裁
+        prev_size = None
+        comfy = self.providers.comfy
+        if comfy is not None:
+            size = size_for_aspect(getattr(project, "aspect", ""),
+                                   (comfy.cfg.width, comfy.cfg.height))
+            if size != (comfy.cfg.width, comfy.cfg.height):
+                prev_size = (comfy.cfg.width, comfy.cfg.height)
+                comfy.cfg.width, comfy.cfg.height = size
+                log(f"关键帧画幅按项目 {project.aspect}：{size[0]}x{size[1]}")
+        try:
+            stats = self._run_batch(project, targets, work, "出关键帧", workers=workers)
+        finally:
+            if prev_size is not None:
+                comfy.cfg.width, comfy.cfg.height = prev_size
         return stats
 
     # ------------------------------------------------------------------ #

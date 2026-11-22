@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 import hashlib
+import re
+from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -27,17 +29,36 @@ from .subtitles import write_ass, write_srt, write_title_ass
 # 硬切在 xfade 链里用极短融合占位（视觉上就是切）
 CUT_EPS = 0.04
 
+_RES_RE = re.compile(r"^\s*(\d{2,5})\s*[x×*]\s*(\d{2,5})\s*$", re.I)
+
+
+def project_size(project: Project, fallback: Tuple[int, int]) -> Tuple[int, int]:
+    """成片尺寸以项目设定为准（如 1280x720），没写或写坏了才用渲染配置的默认值。"""
+    raw = str(getattr(project, "resolution", "") or "")
+    m = _RES_RE.match(raw)
+    if not m:
+        return fallback
+    w, h = int(m.group(1)), int(m.group(2))
+    if not (256 <= w <= 7680 and 256 <= h <= 7680):
+        return fallback
+    return (w - w % 2, h - h % 2)          # H.264 要偶数
+
 
 class Editor:
     def __init__(self, settings: Settings):
         self.s = settings
         self.cfg: RenderConfig = settings.render
+        # 合成期间按项目设定临时覆盖渲染尺寸；结束后恢复，Director 是复用同一个 Editor 的
+        self._out_cfg: Optional[RenderConfig] = None
+
+    def _active(self) -> RenderConfig:
+        return self._out_cfg or self.cfg
 
     # ------------------------------------------------------------------ #
     # 1) 归一化
     # ------------------------------------------------------------------ #
     def normalize(self, src: Path, dst: Path, shot: Shot, *, fade: bool = False) -> float:
-        cfg = self.cfg
+        cfg = self._active()
         ensure_dir(dst.parent)
         dur = max(0.5, float(shot.duration))
         speed = clamp(float(shot.speed or 1.0), 0.25, 4.0)
@@ -79,7 +100,7 @@ class Editor:
     # ------------------------------------------------------------------ #
     def xfade_concat(self, segments: Sequence[dict], dst: Path, *, cwd: Path) -> Path:
         """segments: {path, duration, xfade, td}，转场由「后一条」决定。"""
-        cfg = self.cfg
+        cfg = self._active()
         n = len(segments)
         args: List[str] = []
         for seg in segments:
@@ -114,7 +135,7 @@ class Editor:
     # 卡片
     # ------------------------------------------------------------------ #
     def card(self, dst: Path, duration: float, lines: Sequence[tuple[str, int]]) -> Optional[Path]:
-        cfg = self.cfg
+        cfg = self._active()
         ensure_dir(dst.parent)
         work = dst.parent
         vf_parts: List[str] = []
@@ -169,7 +190,7 @@ class Editor:
         except Exception:
             warn("无损拼接失败，改用重编码拼接")
             ffmpeg(["-f", "concat", "-safe", "0", "-i", listing.name,
-                    *video_args(self.cfg, 20, fast=True), str(dst)], timeout=1800, cwd=cwd)
+                    *video_args(self._active(), 20, fast=True), str(dst)], timeout=1800, cwd=cwd)
         listing.unlink(missing_ok=True)
         return dst
 
@@ -200,12 +221,12 @@ class Editor:
             args += ["-i", str(audio)]
             idx += 1
 
-        bgm = project.bgm or self.cfg.bgm
+        bgm = project.bgm or self._active().bgm
         if bgm and Path(bgm).exists():
             args += ["-stream_loop", "-1", "-i", str(bgm)]
             filters.append(
                 f"[{idx}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,"
-                f"atrim=0:{total:.3f},volume={self.cfg.bgm_volume},"
+                f"atrim=0:{total:.3f},volume={self._active().bgm_volume},"
                 f"afade=t=in:st=0:d=1.2,"
                 f"afade=t=out:st={max(0, total - 2.5):.2f}:d=2.5[b0]"
             )
@@ -233,7 +254,7 @@ class Editor:
     # ------------------------------------------------------------------ #
     def finalize(self, video: Path, audio: Path, dst: Path, *, total: float,
                  ass: Optional[Path] = None, title_ass: Optional[Path] = None) -> Path:
-        cfg = self.cfg
+        cfg = self._active()
         ensure_dir(dst.parent)
         work = video.parent
         filters = []
@@ -257,16 +278,31 @@ class Editor:
     # ------------------------------------------------------------------ #
     # 总装
     # ------------------------------------------------------------------ #
-    def _cache_key(self, shot: Shot) -> str:
+    def _cache_key(self, shot: Shot, size: Optional[Tuple[int, int]] = None) -> str:
+        w, h = size or (self._active().width, self._active().height)
         raw = "|".join(str(x) for x in (
             shot.duration, shot.trim_start, shot.speed, int(shot.reverse), int(shot.mirror),
             shot.filter_preset, shot.brightness, shot.contrast, shot.saturation,
-            shot.temperature, self.cfg.width, self.cfg.height, self.cfg.fps,
+            shot.temperature, w, h, self._active().fps,
         ))
         return hashlib.sha1(raw.encode()).hexdigest()[:8]
 
     def assemble(self, project: Project, *, force: bool = False) -> Dict[str, object]:
+        self._out_cfg = None
         cfg = self.cfg
+        # 成片尺寸跟项目走；配置里的 1920x1080 只是没设定时的兜底。
+        # 字幕字号/边距按高度等比缩放，否则 720p 上会顶到画面中间。
+        size = project_size(project, (cfg.width, cfg.height))
+        if size != (cfg.width, cfg.height):
+            ratio = size[1] / max(1, cfg.height)
+            cfg = replace(
+                cfg, width=size[0], height=size[1],
+                subtitle_size=max(18, round(cfg.subtitle_size * ratio)),
+                subtitle_margin_v=max(24, round(cfg.subtitle_margin_v * ratio)),
+                subtitle_outline=max(1, round(cfg.subtitle_outline * ratio)),
+            )
+            log(f"成片尺寸按项目设定：{size[0]}x{size[1]}")
+        self._out_cfg = cfg
         cache = ensure_dir(project.path("cache"))
         out_dir = ensure_dir(project.path("output"))
         norm_dir = ensure_dir(cache / "norm")
@@ -301,7 +337,7 @@ class Editor:
         norm_files: List[Path] = []
         durations: List[float] = []
         for shot in shots:
-            key = self._cache_key(shot)
+            key = self._cache_key(shot, (cfg.width, cfg.height))
             dst = norm_dir / f"{shot.id}_{key}.mp4"
             if force or not dst.exists() or dst.stat().st_mtime < Path(shot.clip).stat().st_mtime:
                 try:
@@ -418,6 +454,7 @@ class Editor:
         project.save()
         log(f"成片完成 {final.name} | {human_time(info)} | {project.meta['final_size_mb']}MB",
             tag="edit")
+        self._out_cfg = None
         return {
             "output": str(final),
             "duration": round(info, 2),

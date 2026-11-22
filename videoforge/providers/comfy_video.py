@@ -101,6 +101,11 @@ class ComfyVideoProvider(ComfyUIProvider):
         width = self.video_cfg.video_width or None
         height = self.video_cfg.video_height or None
         steps = self.video_cfg.video_steps or 0
+        # turbo LoRA 只在 4~8 步上有意义：4 步最糊、8 步崩、中间最稳
+        if steps and not 4 <= int(steps) <= 8:
+            clamped = min(8, max(4, int(steps)))
+            warn(f"H3 turbo 只支持 4~8 步，配置的 {steps} 已按 {clamped} 处理")
+            steps = clamped
         skip_image = str(self.video_cfg.local_image_mode).lower() in ("skip", "none", "text", "t2v")
 
         pos, neg = self._find(wf, "POSITIVE"), self._find(wf, "NEGATIVE")

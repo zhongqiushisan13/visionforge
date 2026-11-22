@@ -108,3 +108,20 @@ class TestComfyVideoPatch(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestH3Guards(unittest.TestCase):
+    """真机踩出来的护栏：步数越界会把画面跑崩，画幅跟项目不一致会被裁。"""
+
+    def test_steps_clamped_to_turbo_range(self):
+        p = make_provider(H3_WORKFLOW)
+        p.video_cfg.video_steps = 12
+        wf, _ = p.patch_workflow(Shot(id="S01", duration=5), None)
+        if "9" in wf and "steps" in wf["9"].get("inputs", {}):
+            self.assertLessEqual(wf["9"]["inputs"]["steps"], 8)
+
+    def test_aspect_to_keyframe_size(self):
+        from videoforge.providers.comfyui import size_for_aspect
+        self.assertEqual(size_for_aspect("16:9", (1024, 1024)), (1216, 704))
+        self.assertEqual(size_for_aspect("9:16", (1024, 1024)), (704, 1216))
+        self.assertEqual(size_for_aspect("", (1024, 1024)), (1024, 1024))
