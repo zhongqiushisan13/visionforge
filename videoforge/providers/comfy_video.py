@@ -29,8 +29,9 @@ TEXT_KEYS = ("text", "prompt")
 # 需要同步成片帧率的节点：保存节点 + CreateVideo（后者只负责打 fps 元数据）
 FPS_CLASSES = ("SaveVideo", "VHS_VideoCombine", "SaveAnimatedWEBP", "CreateVideo")
 VIDEO_EXT = (".mp4", ".webm", ".mov", ".mkv", ".gif")
-# H3 的时序 VAE 按 4 帧下采样，帧数必须是 4n+1，否则尾部帧被丢掉
-H3_TEMPORAL_ALIGN = 4
+# H3 的帧数必须落在 17k+5 网格上（24fps 下 124 帧≈5 秒），否则尾帧被丢、画面发糊
+H3_TEMPORAL_ALIGN = 17
+H3_TEMPORAL_OFFSET = 5
 H3_MAX_SECONDS = 15
 
 
@@ -81,11 +82,12 @@ class ComfyVideoProvider(ComfyUIProvider):
 
     @staticmethod
     def _h3_frames(frames: int, fps: int) -> int:
-        """H3 的帧数必须落在 4n+1 上，且单镜最长 15 秒。"""
-        grid = max(H3_TEMPORAL_ALIGN + 1,
-                   int(round((frames - 1) / H3_TEMPORAL_ALIGN)) * H3_TEMPORAL_ALIGN + 1)
-        cap = int(round((H3_MAX_SECONDS * fps - 1) / H3_TEMPORAL_ALIGN)) * H3_TEMPORAL_ALIGN + 1
-        return min(grid, cap)
+        """H3 的帧数必须落在 17k+5 上（120 → 124），且单镜最长 15 秒。"""
+        def snap(target: int) -> int:
+            k = max(1, int(round((target - H3_TEMPORAL_OFFSET) / H3_TEMPORAL_ALIGN)))
+            return H3_TEMPORAL_ALIGN * k + H3_TEMPORAL_OFFSET
+
+        return min(snap(frames), snap(int(H3_MAX_SECONDS * fps)))
 
     def patch_workflow(self, shot: Shot, keyframe: Optional[Path]) -> tuple[Dict[str, Any], int]:
         if not self.workflow_name:

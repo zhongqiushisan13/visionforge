@@ -395,9 +395,14 @@ class Editor:
                 title_ass = write_title_ass(cache / "titles.ass", valid, cfg,
                                             starts=shot_starts, durations=shot_durs)
         else:
-            write_srt(srt_path, valid, durations=shot_durs)
+            # 硬切分支同样要带卡片偏移，否则片头卡会把整条字幕顶早 3.2 秒
+            write_srt(srt_path, valid, starts=shot_starts, durations=shot_durs)
             if cfg.subtitle_enabled:
-                ass_path = write_ass(cache / "subtitles.ass", valid, cfg, durations=shot_durs)
+                ass_path = write_ass(cache / "subtitles.ass", valid, cfg,
+                                     starts=shot_starts, durations=shot_durs)
+            if any(s.title_text.strip() for s in valid):
+                title_ass = write_title_ass(cache / "titles.ass", valid, cfg,
+                                            starts=shot_starts, durations=shot_durs)
             if any(s.title_text.strip() for s in valid):
                 title_ass = write_title_ass(cache / "titles.ass", valid, cfg, durations=shot_durs)
 

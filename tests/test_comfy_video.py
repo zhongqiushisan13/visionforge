@@ -67,16 +67,16 @@ class TestComfyVideoPatch(unittest.TestCase):
         self.assertEqual((wf["6"]["inputs"]["width"], wf["6"]["inputs"]["height"]), (608, 352))
 
     def test_frame_count_aligned_to_h3_grid(self):
-        """H3 帧数必须是 4n+1：5s×24fps=120 → 121，3s=72 → 73。"""
+        """H3 帧数必须落在 17k+5：5s×24fps=120 → 124，3s=72 → 73。"""
         wf, _ = make_provider(H3_WORKFLOW).patch_workflow(Shot(id="S01", duration=5), None)
-        self.assertEqual(wf["6"]["inputs"]["length"], 121)
-        self.assertEqual((wf["6"]["inputs"]["length"] - 1) % 4, 0)
+        self.assertEqual(wf["6"]["inputs"]["length"], 124)
+        self.assertEqual((wf["6"]["inputs"]["length"] - 5) % 17, 0)
         wf3, _ = make_provider(H3_WORKFLOW).patch_workflow(Shot(id="S02", duration=3), None)
         self.assertEqual(wf3["6"]["inputs"]["length"], 73)
 
     def test_frame_count_capped_at_h3_ceiling(self):
         wf, _ = make_provider(H3_WORKFLOW).patch_workflow(Shot(id="S01", duration=30), None)
-        self.assertEqual(wf["6"]["inputs"]["length"], 361)      # 15s × 24fps，H3 上限
+        self.assertEqual(wf["6"]["inputs"]["length"], 362)      # 15s × 24fps，H3 上限
 
     def test_scheduler_steps_overridable(self):
         wf_with_sched = dict(H3_WORKFLOW)
