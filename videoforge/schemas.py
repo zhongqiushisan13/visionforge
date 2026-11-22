@@ -11,6 +11,16 @@ from .utils import ensure_dir, now_iso, read_json, write_json
 
 SHOT_STATUS = ("pending", "keyframe", "rendered", "voiced", "failed", "skipped")
 
+# 新建项目时按画幅给默认成片尺寸：竖屏不该默认出横屏
+ASPECT_RESOLUTION = {
+    "16:9": "1280x720",
+    "9:16": "720x1280",
+    "1:1": "1024x1024",
+    "4:3": "1152x864",
+    "3:4": "864x1152",
+    "21:9": "1344x576",
+}
+
 
 def _s(v: Any, default: str = "") -> str:
     if v is None:
@@ -218,13 +228,14 @@ class Project:
     # ---------------- 生命周期 ---------------- #
     @classmethod
     def create(cls, directory: Path | str, *, title: str, brief: str, slug: str,
-               aspect: str = "16:9", resolution: str = "1920x1080", fps: int = 30,
+               aspect: str = "16:9", resolution: str = "", fps: int = 30,
                mock: bool = False) -> "Project":
         directory = Path(directory)
         ensure_dir(directory)
         p = cls(
             slug=slug, title=title, brief=brief, aspect=aspect,
-            resolution=resolution, fps=fps, mock=mock,
+            # 不指定分辨率就按画幅给：竖屏项目默认 720x1280，别再出 1920x1080 横屏成片
+            resolution=resolution or ASPECT_RESOLUTION.get(aspect, "1920x1080"), fps=fps, mock=mock,
             created_at=now_iso(), updated_at=now_iso(),
         )
         p.meta["_dir"] = str(directory.resolve())

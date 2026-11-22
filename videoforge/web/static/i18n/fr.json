@@ -511,5 +511,16 @@
   "（无台词）": "(pas de dialogue)",
   "（未读到）": "(aucun trouvé)",
   "，模型填": ", modèle",
-  "；vLLM / LM Studio 选「自定义」。": " ; choisissez « Custom » pour vLLM / LM Studio."
+  "；vLLM / LM Studio 选「自定义」。": " ; choisissez « Custom » pour vLLM / LM Studio.",
+  "打开 ComfyUI 界面": "Ouvrir ComfyUI",
+  "停止 ComfyUI": "Arrêter ComfyUI",
+  "启动 ComfyUI": "Démarrer ComfyUI",
+  "复制工作流目录": "Copier le dossier des workflows",
+  "想手动调参数：在 ComfyUI 里改工作流，导出 API 格式，覆盖工作流目录里的同名文件": "Pour ajuster à la main : modifiez le workflow dans ComfyUI, exportez au format API, puis remplacez le fichier du même nom dans le dossier des workflows",
+  "已在浏览器打开": "Ouvert dans le navigateur",
+  "正在启动 ComfyUI，首次加载模型要一分钟左右": "Démarrage de ComfyUI — le premier chargement prend environ une minute",
+  "ComfyUI 已启动": "ComfyUI démarré",
+  "ComfyUI 已停止": "ComfyUI arrêté",
+  "没有可停止的进程": "Aucun processus à arrêter",
+  "工作流目录已复制": "Dossier des workflows copié"
 }

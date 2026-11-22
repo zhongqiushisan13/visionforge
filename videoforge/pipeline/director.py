@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from ..config import Settings
 from ..providers import Providers, ProviderError
 from ..providers.comfyui import size_for_aspect
+from ..providers.comfy_video import video_size_for_aspect
 from ..schemas import Project, Shot
 from ..series import asset_path, compose_prompt, extract_last_frame, load_series
 from ..utils import Timer, ensure_dir, human_time, log, now_iso, warn
@@ -336,7 +337,22 @@ class Director:
             finally:
                 self._release(reservation)
 
-        return self._run_batch(project, targets, work, "生成镜头")
+        # 本地 H3 一张卡只能跑一路，多镜并发会互相挤显存
+        workers = 1 if self.providers.comfy_video else None
+        # 竖屏项目按 352x608 出片，横屏 608x352；用户手填了尺寸就不动
+        vp = self.providers.comfy_video
+        prev_video_size = None
+        if vp is not None and not (vp.video_cfg.video_width or vp.video_cfg.video_height):
+            size = video_size_for_aspect(getattr(project, "aspect", ""))
+            if size != (0, 0):
+                prev_video_size = (vp.video_cfg.video_width, vp.video_cfg.video_height)
+                vp.video_cfg.video_width, vp.video_cfg.video_height = size
+                log(f"分镜按项目画幅 {project.aspect} 出片：{size[0]}x{size[1]}")
+        try:
+            return self._run_batch(project, targets, work, "生成镜头", workers=workers)
+        finally:
+            if prev_video_size is not None:
+                vp.video_cfg.video_width, vp.video_cfg.video_height = prev_video_size
 
     # ------------------------------------------------------------------ #
     # 批量执行器

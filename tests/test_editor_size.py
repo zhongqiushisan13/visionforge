@@ -32,3 +32,35 @@ class TestProjectSize(unittest.TestCase):
         p = Project()
         p.resolution = "20x20"
         self.assertEqual(project_size(p, (1920, 1080)), (1920, 1080))
+
+
+class TestProjectCreateSize(unittest.TestCase):
+    """新建项目时按画幅给分辨率：竖屏别默认成横屏。"""
+
+    def _create(self, aspect):
+        import tempfile
+        from pathlib import Path
+        from videoforge.schemas import Project
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        p = Project.create(Path(td.name) / "p", title="t", brief="b", slug="p", aspect=aspect)
+        return p
+
+    def test_vertical_defaults_to_portrait(self):
+        self.assertEqual(self._create("9:16").resolution, "720x1280")
+
+    def test_widescreen_defaults_to_720p(self):
+        self.assertEqual(self._create("16:9").resolution, "1280x720")
+
+    def test_square_defaults_to_1024(self):
+        self.assertEqual(self._create("1:1").resolution, "1024x1024")
+
+    def test_explicit_resolution_wins(self):
+        import tempfile
+        from pathlib import Path
+        from videoforge.schemas import Project
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        p = Project.create(Path(td.name) / "q", title="t", brief="b", slug="q",
+                           aspect="9:16", resolution="1080x1920")
+        self.assertEqual(p.resolution, "1080x1920")

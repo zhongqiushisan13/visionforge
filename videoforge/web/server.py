@@ -1269,6 +1269,49 @@ def create_app() -> FastAPI:
         job = MANAGER.submit("setup", run)
         return {"job": job.id}
 
+    # ---------------- 手动控制 ComfyUI ---------------- #
+    @app.get("/api/comfy/ui")
+    def comfy_ui() -> Dict[str, Any]:
+        s = _settings()
+        info = setup_env.status(s)
+        return {
+            "url": setup_env.ui_url(s),
+            "reachable": info["comfy"]["reachable"],
+            "version": info["comfy"]["version"],
+            "main": str(setup_env.comfy_main(s.comfy.root) or ""),
+            "workflows": {
+                "dir": str(s.workflows_dir),
+                "image": s.comfy.workflow,
+                "video": s.minimax.video_workflow,
+            },
+        }
+
+    @app.post("/api/comfy/launch")
+    def comfy_launch() -> Dict[str, Any]:
+        try:
+            return setup_env.launch(_settings())
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+    @app.post("/api/comfy/open")
+    def comfy_open() -> Dict[str, Any]:
+        """在默认浏览器里打开 ComfyUI 自己的界面（桌面壳里 window.open 不一定好使）。"""
+        s = _settings()
+        url = setup_env.ui_url(s)
+        try:
+            import webbrowser
+            webbrowser.open_new_tab(url)
+        except Exception:
+            pass
+        return {"url": url}
+
+    @app.post("/api/comfy/stop")
+    def comfy_stop() -> Dict[str, Any]:
+        try:
+            return setup_env.stop(_settings())
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
     app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
     return app
 

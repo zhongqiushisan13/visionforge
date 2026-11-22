@@ -34,6 +34,20 @@ H3_TEMPORAL_ALIGN = 17
 H3_TEMPORAL_OFFSET = 5
 H3_MAX_SECONDS = 15
 
+# 竖屏短剧和横屏用不同的出图尺寸：0.4MP 左右是 8G 显存能稳住的量级
+VIDEO_SIZES = {
+    "16:9": (608, 352),
+    "9:16": (352, 608),
+    "1:1": (512, 512),
+    "4:3": (576, 448),
+    "3:4": (448, 576),
+}
+
+
+def video_size_for_aspect(aspect: str) -> tuple[int, int]:
+    """按项目画幅给出 H3 的生成尺寸；认不出来就交给工作流自带的默认值。"""
+    return VIDEO_SIZES.get(str(aspect or "").strip(), (0, 0))
+
 
 class ComfyVideoProvider(ComfyUIProvider):
     name = "comfyui-video"
@@ -100,6 +114,13 @@ class ComfyVideoProvider(ComfyUIProvider):
         # 免得把 H3 的 608x352 顶成关键帧出图的 1344x768 直接爆显存
         width = self.video_cfg.video_width or None
         height = self.video_cfg.video_height or None
+        # H3 要求宽高是 32 的倍数，写错了会直接报错或出畸形画面
+        if width and width % 32:
+            warn(f"视频宽度 {width} 不是 32 的倍数，已按 {width // 32 * 32} 处理")
+            width = (width // 32) * 32
+        if height and height % 32:
+            warn(f"视频高度 {height} 不是 32 的倍数，已按 {height // 32 * 32} 处理")
+            height = (height // 32) * 32
         steps = self.video_cfg.video_steps or 0
         # turbo LoRA 只在 4~8 步上有意义：4 步最糊、8 步崩、中间最稳
         if steps and not 4 <= int(steps) <= 8:
@@ -197,7 +218,52 @@ class ComfyVideoProvider(ComfyUIProvider):
         return out_path
 
     # ---------------- 对外 ---------------- #
+    def preflight(self) -> None:
+        """开跑前确认模型都在 ComfyUI 里，别等十分钟才发现缺文件。"""
+        try:
+            info = self._info()
+        except Exception as exc:
+            raise ProviderError(f"连不上 ComfyUI（{self.cfg.base_url}）：{exc}", retryable=True)
+
+        wf = self.load_workflow(self.workflow_name)
+        checks = []
+        for node in wf.values():
+            if not isinstance(node, dict):
+                continue
+            cls = node.get("class_type", "")
+            inputs = node.get("inputs") or {}
+            if cls == "UnetLoaderGGUF":
+                checks.append(("UNET", cls, "unet_name", inputs.get("unet_name")))
+            elif cls == "CLIPLoaderGGUF":
+                checks.append(("文本编码器", cls, "clip_name", inputs.get("clip_name")))
+            elif cls == "VAELoader":
+                checks.append(("VAE", cls, "vae_name", inputs.get("vae_name")))
+            elif cls in ("LoraLoaderModelOnly", "LoraLoader"):
+                checks.append(("LoRA", cls, "lora_name", inputs.get("lora_name")))
+
+        missing = []
+        for label, cls, field, value in checks:
+            spec = (info.get(cls) or {}).get("input", {}).get("required", {}).get(field)
+            if not spec:
+                missing.append(f"{label} 节点缺失（{cls}）")
+                continue
+            options = spec[0] if isinstance(spec, list) and spec else []
+            if value and isinstance(options, list) and value not in options:
+                missing.append(f"{label} 没找到：{value}")
+        if missing:
+            raise ProviderError(
+                "本地出图环境不完整：" + "；".join(missing)
+                + "。去「设置 → 本地出图环境」重新安装或改路径。",
+                retryable=False,
+            )
+        # H3 是 24fps 训练的，项目帧率不一样会让帧数网格和运动节奏都偏
+        fps = int(self.s.render.fps)
+        if fps != 24 and not getattr(self, "_fps_warned", False):
+            warn(f"H3 按 24fps 训练，当前项目 {fps}fps，画质和运动可能打折")
+            self._fps_warned = True
+
     def generate(self, shot: Shot, out_path: Path, keyframe: Optional[Path] = None) -> ProviderResult:
+        self.preflight()
         wf, seed = self.patch_workflow(shot, keyframe)
         pid = self.queue(wf)
         log(f"{shot.id} 视频工作流入队 prompt_id={pid}", tag="comfy")

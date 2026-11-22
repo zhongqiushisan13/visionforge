@@ -11,7 +11,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
+import subprocess
+import sys
 import time
 import zipfile
 from pathlib import Path
@@ -173,6 +176,11 @@ def status(settings: Settings, provider=None) -> Dict[str, Any]:
     return {
         "comfy": {"url": url, "reachable": reachable, "version": version, "error": error},
         "root": {"path": root, "valid": root_ok},
+        "workflows": {
+            "dir": str(settings.workflows_dir),
+            "image": settings.comfy.workflow,
+            "video": settings.minimax.video_workflow,
+        },
         "items": items,
         "ready": {"standard": standard_ready, "light": light_ready},
         "disk_free": disk_free,
@@ -340,3 +348,126 @@ def install(settings: Settings, item_ids: List[str], job=None, mirror: bool = Tr
             if job:
                 job.add_log(f"失败 {item_id}：{exc}")
     return {"ok": done, "failed": failed}
+
+
+# --------------------------------------------------------------------------- #
+# 手动控制：启动 / 停止 / 打开 ComfyUI 自己的界面
+# --------------------------------------------------------------------------- #
+def ui_url(settings: Settings) -> str:
+    """ComfyUI 自带的 Web 界面地址（和 VisionForge 是两个页面，端口不同）。"""
+    return settings.comfy.base_url.rstrip("/")
+
+
+def _port_of(settings: Settings) -> int:
+    raw = ui_url(settings)
+    tail = raw.rsplit(":", 1)[-1].split("/")[0]
+    try:
+        return int(tail)
+    except ValueError:
+        return 8188
+
+
+def comfy_main(root: str) -> Optional[Path]:
+    """ComfyUI 主目录可能是 ComfyUI/ 本身，也可能是它的上一层。"""
+    if not root:
+        return None
+    base = Path(root)
+    for cand in (base / "main.py", base / "ComfyUI" / "main.py"):
+        if cand.exists():
+            return cand
+    return None
+
+
+def comfy_python(root: str) -> Optional[str]:
+    """优先用便携包自带的 python_embeded，其次系统 Python。"""
+    if root:
+        base = Path(root)
+        for cand in (base.parent / "python_embeded" / "python.exe",
+                     base / "python_embeded" / "python.exe",
+                     base.parent / "python_embeded" / "python",
+                     base / "venv" / "Scripts" / "python.exe"):
+            if cand.exists():
+                return str(cand)
+    return shutil.which("python") or shutil.which("python3")
+
+
+def _netstat_pid(port: int) -> Optional[int]:
+    """找监听该端口的进程（Windows 用 netstat，其它平台交给 psutil 缺省不查）。"""
+    if os.name != "nt":
+        return None
+    try:
+        # 别用 text=True：中文系统的 netstat 是 GBK，按 UTF-8 解码会直接抛异常
+        raw = subprocess.run(["netstat", "-ano"], capture_output=True, timeout=20).stdout or b""
+        text = raw.decode("utf-8", errors="ignore")
+    except Exception:
+        return None
+    for line in text.splitlines():
+        if "LISTENING" not in line:
+            continue
+        parts = line.split()
+        if len(parts) >= 5 and parts[1].endswith(f":{port}"):
+            try:
+                return int(parts[-1])
+            except ValueError:
+                continue
+    return None
+
+
+def launch(settings: Settings, *, wait: float = 0.0) -> Dict[str, Any]:
+    """拉起 ComfyUI；已经在跑就只回报地址，不重复启动。"""
+    from .providers.comfyui import ComfyUIProvider
+
+    url = ui_url(settings)
+    try:
+        ComfyUIProvider(settings).verify()
+        return {"ok": True, "already": True, "url": url}
+    except Exception:
+        pass
+
+    main = comfy_main(settings.comfy.root)
+    if main is None:
+        raise ValueError("没有找到 ComfyUI 主目录，先在设置页指定 ComfyUI 路径")
+    py = comfy_python(settings.comfy.root)
+    if not py:
+        raise ValueError("找不到可用的 Python，无法启动 ComfyUI（便携包应带 python_embeded）")
+
+    port = _port_of(settings)
+    logfile = ensure_dir(main.parent / "logs") / "comfyui-launch.log"
+    env = {k: v for k, v in os.environ.items()
+           if k.lower() not in ("http_proxy", "https_proxy", "all_proxy", "no_proxy")}
+    env["PYTHONIOENCODING"] = "utf-8"
+
+    args = [py, "-s", str(main), "--port", str(port), "--listen", "127.0.0.1",
+            "--preview-method", "none"]
+    flags = 0
+    if os.name == "nt":
+        flags = 0x00000008 | 0x00000200          # DETACHED_PROCESS | NEW_PROCESS_GROUP
+    with open(logfile, "ab") as fh:
+        proc = subprocess.Popen(args, cwd=str(main.parent), env=env,
+                                stdout=fh, stderr=subprocess.STDOUT,
+                                close_fds=True, creationflags=flags)
+    log(f"ComfyUI 已启动 pid={proc.pid}，日志 {logfile}", tag="comfy")
+
+    deadline = time.time() + max(0.0, wait)
+    from .providers.comfyui import ComfyUIProvider
+    while time.time() < deadline:
+        try:
+            ComfyUIProvider(settings).verify()
+            return {"ok": True, "started": True, "pid": proc.pid, "url": url}
+        except Exception:
+            time.sleep(2)
+    return {"ok": True, "started": True, "pid": proc.pid, "url": url, "warming": True}
+
+
+def stop(settings: Settings) -> Dict[str, Any]:
+    """按端口找到 ComfyUI 进程并结束；不是我们启动的也能停。"""
+    port = _port_of(settings)
+    pid = _netstat_pid(port)
+    if not pid:
+        return {"ok": True, "stopped": False, "reason": f"端口 {port} 上没有进程"}
+    if os.name != "nt":
+        raise ValueError("当前系统暂不支持一键停止，请手动结束 ComfyUI 进程")
+    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                   capture_output=True, timeout=30)
+    time.sleep(1.5)
+    return {"ok": True, "stopped": True, "pid": pid}

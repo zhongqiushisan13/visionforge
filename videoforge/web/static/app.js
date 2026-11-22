@@ -1230,6 +1230,13 @@ function fmtSize(n) {
   return `${Math.max(1, Math.round(v / 1e3))} KB`;
 }
 
+async function refreshSetup() {
+  try {
+    S.setup = await api('/api/setup/status');
+    if (S.view === 'settings') render();
+  } catch (e) { /* 环境检测失败不挡界面 */ }
+}
+
 function setupPanel() {
   const st = S.setup;
   if (!st) {
@@ -1254,6 +1261,15 @@ function setupPanel() {
     <div class="hint" style="margin-bottom:8px">${st.root.valid
       ? `${t('ComfyUI 目录')}：<span class="mono">${esc(st.root.path)}</span> · ${t('磁盘剩余')} ${fmtGB(st.disk_free)}`
       : t('先设置 ComfyUI 目录才能装模型')}</div>
+    <div class="row" style="margin:8px 0;flex-wrap:wrap">
+      ${st.comfy.reachable ? `
+        <button class="btn sm" data-act="comfy-ui">${icon('globe')}${t('打开 ComfyUI 界面')}</button>
+        <button class="btn sm ghost" data-act="comfy-stop">${icon('close')}${t('停止 ComfyUI')}</button>`
+      : `<button class="btn sm primary" data-act="comfy-launch">${icon('play')}${t('启动 ComfyUI')}</button>`}
+      <button class="btn sm ghost" data-act="comfy-copy-wf">${icon('terminal')}${t('复制工作流目录')}</button>
+    </div>
+    <div class="hint" style="margin-bottom:8px">${t('想手动调参数：在 ComfyUI 里改工作流，导出 API 格式，覆盖工作流目录里的同名文件')}
+      <span class="mono">${esc(st.workflows?.video || '')}</span></div>
     <label class="chk"><input type="checkbox" id="setupMirror" checked> ${t('镜像源（国内加速）')}</label>
     <div class="row" style="margin:8px 0;flex-wrap:wrap">
       <button class="btn sm primary" data-act="setup-install"
@@ -1919,6 +1935,38 @@ document.addEventListener('click', async e => {
 
   /* ---- 本地出图环境 ---- */
   if (act === 'setup-root') { setupRootModal(); return; }
+  if (act === 'comfy-ui') {
+    try {
+      const r = await api('/api/comfy/open', { method: 'POST' });
+      toast(`${t('已在浏览器打开')} ${r.url}`, 'ok');
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'comfy-launch') {
+    try {
+      toast(t('正在启动 ComfyUI，首次加载模型要一分钟左右'));
+      const r = await api('/api/comfy/launch', { method: 'POST' });
+      if (r.url) toast(`${t('ComfyUI 已启动')} ${r.url}`, 'ok');
+      setTimeout(refreshSetup, 4000);
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'comfy-stop') {
+    try {
+      const r = await api('/api/comfy/stop', { method: 'POST' });
+      toast(r.stopped ? t('ComfyUI 已停止') : (r.reason || t('没有可停止的进程')), r.stopped ? 'ok' : '');
+      await refreshSetup();
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
+  if (act === 'comfy-copy-wf') {
+    const dir = S.setup?.workflows?.dir || '';
+    try {
+      await navigator.clipboard.writeText(dir);
+      toast(t('工作流目录已复制'));
+    } catch (e) { toast(dir); }
+    return;
+  }
   if (act === 'do-setup-root') {
     try {
       const r = await api('/api/setup/root', { method: 'POST', body: { path: $('#cuRoot').value.trim() } });

@@ -132,3 +132,50 @@ class VerifyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ManualControlTest(unittest.TestCase):
+    """手动控制 ComfyUI：界面地址、主目录识别、缺目录时的报错。"""
+
+    def _settings(self, root=""):
+        s = Settings()
+        s.comfy.root = root
+        return s
+
+    def test_ui_url_strips_slash(self):
+        s = self._settings()
+        s.comfy.base_url = "http://127.0.0.1:8188/"
+        self.assertEqual(setup_env.ui_url(s), "http://127.0.0.1:8188")
+
+    def test_port_parsing(self):
+        s = self._settings()
+        s.comfy.base_url = "http://127.0.0.1:9999"
+        self.assertEqual(setup_env._port_of(s), 9999)
+
+    def test_find_main_in_root_and_parent(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            (base / "main.py").write_text("", encoding="utf-8")
+            self.assertEqual(setup_env.comfy_main(str(base)), base / "main.py")
+
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            inner = base / "ComfyUI"
+            inner.mkdir()
+            (inner / "main.py").write_text("", encoding="utf-8")
+            self.assertEqual(setup_env.comfy_main(str(base)), inner / "main.py")
+
+    def test_launch_requires_root(self):
+        s = self._settings("")
+        s.comfy.base_url = "http://127.0.0.1:59999"      # 指到没人听的端口，避免本机 ComfyUI 干扰
+        with self.assertRaises(ValueError):
+            setup_env.launch(s)
+
+    def test_workflows_in_status(self):
+        s = self._settings()
+        s.comfy.workflow = "sdxl_ipadapter.json"
+        s.minimax.video_workflow = "minimax_h3_gguf_i2v.json"
+        info = setup_env.status(s, provider=FakeProvider(fail=True))
+        self.assertEqual(info["workflows"]["image"], "sdxl_ipadapter.json")
+        self.assertEqual(info["workflows"]["video"], "minimax_h3_gguf_i2v.json")
+        self.assertTrue(info["workflows"]["dir"])
