@@ -1,6 +1,7 @@
 """项目包 .vfpkg：导出→导入往返、路径重写、恶意包拦截。"""
 
 import json
+import os
 import tempfile
 import unittest
 import zipfile
@@ -83,7 +84,10 @@ class TestImport(unittest.TestCase):
             self.assertEqual(p2.dir.name, "demo")
             self.assertEqual(p2.title, "演示项目")
             shot = p2.shots[0]
-            self.assertEqual(Path(shot.clip), p2.dir / "clips" / "S01.mp4")
+            # 比较真实路径：GitHub 的 Windows 跑者会把临时目录给成 8.3 短名（RUNNER~1），
+            # 直接比字符串会误判，realpath 会把两侧都还原成长路径
+            self.assertEqual(os.path.realpath(shot.clip),
+                             os.path.realpath(p2.dir / "clips" / "S01.mp4"))
             self.assertTrue(Path(shot.clip).exists())
             self.assertTrue(Path(shot.keyframe).exists())
             self.assertTrue(Path(shot.audio).exists())
