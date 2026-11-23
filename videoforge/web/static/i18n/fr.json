@@ -522,5 +522,7 @@
   "ComfyUI 已启动": "ComfyUI démarré",
   "ComfyUI 已停止": "ComfyUI arrêté",
   "没有可停止的进程": "Aucun processus à arrêter",
-  "工作流目录已复制": "Dossier des workflows copié"
+  "工作流目录已复制": "Dossier des workflows copié",
+  "设定图": "Fiches de production",
+  "先固定角色三视图与场景板，后面的镜头都参考它": "Verrouillez d'abord les planches personnages et les décors ; chaque plan s'y réfère"
 }

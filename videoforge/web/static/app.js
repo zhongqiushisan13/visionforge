@@ -621,6 +621,7 @@ function renderStoryboard() {
   if (!p.shots.length) return emptyShots();
   return `
   <div class="toolbar">
+    <button class="btn sm ghost" data-act="do" data-action="design" title="${t('先固定角色三视图与场景板，后面的镜头都参考它')}">${icon('layers')}${t('设定图')}</button>
     <button class="btn sm" data-act="do" data-action="keyframes">${icon('image')}出关键帧</button>
     <button class="btn sm" data-act="do" data-action="clips">${icon('video')}生成镜头</button>
     <button class="btn sm" data-act="do" data-action="voice">${icon('mic')}生成配音</button>

@@ -209,6 +209,14 @@ class Director:
             f"({human_time(time.time() - t0)})")
         return stats
 
+    def design(self, project: Project, force: bool = False) -> Dict[str, int]:
+        """开拍前固定角色三视图与场景板；已有 locked 图就跳过。"""
+        from .design import Designer
+
+        stats = Designer(self.providers).run(project, force=force)
+        project.save()
+        return stats
+
     # ------------------------------------------------------------------ #
     # 关键帧
     # ------------------------------------------------------------------ #
@@ -414,6 +422,11 @@ class Director:
             if adjusted:
                 log(f"按配音时长调整了 {adjusted} 条镜头时长")
         if with_keyframes:
+            # 先把角色三视图 / 场景板固定下来，关键帧才有稳定参考可吃
+            try:
+                self.design(project)
+            except Exception as exc:
+                warn(f"设定图跳过（{exc}），关键帧仍按文字提示词出图")
             self.keyframes(project, targets, force=force)
         self.clips(project, targets, force=force)
 

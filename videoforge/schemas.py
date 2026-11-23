@@ -62,6 +62,14 @@ class Character:
 
 
 @dataclass
+class Scene:
+    """场景素材：开拍前定一张空镜板，后面所有同场景镜头都参考它。"""
+    name: str = ""
+    look: str = ""          # 中文描述
+    look_en: str = ""       # 英文描述（喂给出图模型）
+
+
+@dataclass
 class Shot:
     id: str = ""
     index: int = 0
@@ -167,6 +175,7 @@ class Script:
     language: str = "zh"
     narrator: str = ""
     characters: List[Character] = field(default_factory=list)
+    scenes: List[Scene] = field(default_factory=list)
     beats: List[Dict[str, str]] = field(default_factory=list)
     style_prompt: str = ""       # 全局影像风格（英文，拼进每条提示词）
     music_mood: str = ""
@@ -188,6 +197,9 @@ class Script:
             language=_s(d.get("language"), "zh"),
             narrator=_s(d.get("narrator")),
             characters=[Character.from_dict(c) for c in d.get("characters") or [] if isinstance(c, dict)],
+            scenes=[Scene(name=_s(s.get("name")), look=_s(s.get("look") or s.get("desc")),
+                          look_en=_s(s.get("look_en") or s.get("desc_en")))
+                    for s in d.get("scenes") or [] if isinstance(s, dict)],
             beats=[b if isinstance(b, dict) else {"summary": _s(b)} for b in d.get("beats") or []],
             style_prompt=_s(d.get("style_prompt")),
             music_mood=_s(d.get("music_mood")),

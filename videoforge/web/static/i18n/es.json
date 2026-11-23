@@ -522,5 +522,7 @@
   "ComfyUI 已启动": "ComfyUI iniciado",
   "ComfyUI 已停止": "ComfyUI detenido",
   "没有可停止的进程": "No hay proceso que detener",
-  "工作流目录已复制": "Carpeta de flujos copiada"
+  "工作流目录已复制": "Carpeta de flujos copiada",
+  "设定图": "Fichas de diseño",
+  "先固定角色三视图与场景板，后面的镜头都参考它": "Fija primero las hojas de personaje y los decorados; cada plano los usa como referencia"
 }

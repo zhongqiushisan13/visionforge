@@ -522,5 +522,7 @@
   "ComfyUI 已启动": "ComfyUI started",
   "ComfyUI 已停止": "ComfyUI stopped",
   "没有可停止的进程": "No running process",
-  "工作流目录已复制": "Workflow folder copied"
+  "工作流目录已复制": "Workflow folder copied",
+  "设定图": "Set design",
+  "先固定角色三视图与场景板，后面的镜头都参考它": "Lock character turnaround sheets and scene plates first; every shot references them"
 }

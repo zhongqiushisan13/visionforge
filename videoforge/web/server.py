@@ -1027,7 +1027,7 @@ def create_app() -> FastAPI:
     def project_action(slug: str, payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         _guard_busy()
         action = str(payload.get("action") or "")
-        if action not in ("voice", "keyframes", "clips", "render", "assemble", "all"):
+        if action not in ("design", "voice", "keyframes", "clips", "render", "assemble", "all"):
             raise HTTPException(400, f"未知操作：{action}")
         force = bool(payload.get("force"))
         only = str(payload.get("only") or "")
@@ -1049,7 +1049,9 @@ def create_app() -> FastAPI:
                 if not subset:
                     return {"action": action, "skipped": "no-failed"}
             result: Dict[str, Any] = {"action": action, "targets": len(subset or p.shots)}
-            if action == "voice":
+            if action == "design":
+                result["design"] = d.design(p, force=force)
+            elif action == "voice":
                 result["voice"] = d.voice(p, subset, force=force)
             elif action == "keyframes":
                 result["keyframes"] = d.keyframes(p, subset, force=force)

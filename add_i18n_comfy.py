@@ -75,6 +75,21 @@ DATA = {
         "ja": "ワークフローフォルダーをコピーしました", "ko": "워크플로 폴더 복사됨",
         "ar": "تم نسخ مجلد سير العمل", "zh-TW": "已複製工作流目錄",
     },
+    "设定图": {
+        "en": "Set design", "fr": "Fiches de production", "de": "Designbogen",
+        "es": "Fichas de diseño", "ja": "設定画", "ko": "설정 이미지",
+        "ar": "أوراق التصميم", "zh-TW": "設定圖",
+    },
+    "先固定角色三视图与场景板，后面的镜头都参考它": {
+        "en": "Lock character turnaround sheets and scene plates first; every shot references them",
+        "fr": "Verrouillez d'abord les planches personnages et les décors ; chaque plan s'y réfère",
+        "de": "Zuerst Charakterbögen und Szenenplatten fixieren; jede Einstellung bezieht sich darauf",
+        "es": "Fija primero las hojas de personaje y los decorados; cada plano los usa como referencia",
+        "ja": "先にキャラクター三面図と背景板を固定し、各カットはそれを参照します",
+        "ko": "먼저 캐릭터 삼면도와 배경 판을 고정하고, 모든 컷이 이를 참조합니다",
+        "ar": "ثبّت أوراق الشخصيات ولوحات المشاهد أولًا، وكل لقطة تشير إليها",
+        "zh-TW": "先固定角色三視圖與場景板，後面的鏡頭都參考它",
+    },
 }
 
 
@@ -84,13 +99,15 @@ def main() -> None:
         data = json.loads(lang_file.read_text(encoding="utf-8"))
         added = 0
         for key, values in DATA.items():
-            if lang == "zh-TW":
-                continue
             text = values.get(lang)
             if text and key not in data:
                 data[key] = text
                 added += 1
-        lang_file.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        try:
+            lang_file.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except PermissionError as exc:
+            print(lang, "写入失败（文件被占用）：", exc)
+            continue
         print(lang, len(data), f"(+{added})")
 
 

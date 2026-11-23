@@ -48,6 +48,9 @@ OUTLINE_USER = """请为下面这支短片写创作大纲。
   "characters": [
     {{"name": "角色名", "look": "中文外形与服装描述", "look_en": "consistent English appearance description, 15-30 words, reusable across shots", "voice": "音色建议"}}
   ],
+  "scenes": [
+    {{"name": "场景名（4-8 字，后面分镜会引用）", "look": "中文场景描述：地点、时间、光线、陈设", "look_en": "English empty-plate description: location, time of day, lighting, key props, no people, 15-30 words"}}
+  ],
   "beats": [
     {{"act": "第一幕 建立", "summary": "这一段落发生什么", "emotion": "情绪", "duration": 15}}
   ],
@@ -139,6 +142,11 @@ class Screenwriter:
         for c in sc.characters:
             if not c.look_en:
                 c.look_en = c.look
+        if not sc.scenes:
+            sc.scenes = []
+        for item in sc.scenes:
+            if not item.look_en:
+                item.look_en = item.look
         return sc
 
     def _shots(self, script: Script, duration: int, shot_hint: int, language: str) -> List[Shot]:
@@ -147,6 +155,7 @@ class Screenwriter:
             "title": script.title, "logline": script.logline, "synopsis": script.synopsis,
             "tone": script.tone, "genre": script.genre,
             "characters": [{"name": c.name, "look": c.look, "look_en": c.look_en} for c in script.characters],
+            "scenes": [{"name": s.name, "look": s.look, "look_en": s.look_en} for s in script.scenes],
             "beats": script.beats, "style_prompt": script.style_prompt,
             "music_mood": script.music_mood,
         }
